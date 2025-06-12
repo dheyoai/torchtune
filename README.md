@@ -15,3 +15,15 @@ pip install --pre --upgrade torch torchvision torchao --index-url https://downlo
 
 Note: For further instructions checkout [Original README](./README_original.md)
 
+## Getting started with QAT
+```
+tune download <model> --output-dir <your_output_dir>
+```
+
+### To run distributed fine-tuning on 2 GPUs
+```
+tune run --nproc_per_node 2 qat_distributed --config recipes/configs/<path_to_yaml_config_file>
+```
+
+The checkpoints and trainer states will be stored in the path mentioned under `output_dir` in the above yaml config file.
+

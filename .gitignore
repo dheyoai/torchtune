@@ -188,3 +188,4 @@ cover/
 # wandb
 wandb/
 tune_env
+models
