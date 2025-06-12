@@ -848,6 +848,127 @@ class AlpacaToMessages(Transform):
         return {"messages": messages}
 
 
+
+
+class OpenThoughtsToMessages(Transform):
+    """
+    Message transform class for Alpaca-style datasets with "instruction", "input", and "output"
+    (or equivalent fields specified in column_map) columns. User messages are formed from the
+    instruction + input columns and assistant messages are formed from the output column. Prompt
+    templating is conditional on the presence of the "input" column, and thus is handled directly
+    in this transform class instead of a dedicated :class:`~torchtune.data.PromptTemplate` class
+    due to this custom logic.
+
+    Args:
+        train_on_input (Optional[bool]): whether the model is trained on the user prompt or not.
+            Deprecated parameter and will be removed in a future release.
+            Default is None.
+        column_map (Optional[dict[str, str]]): a mapping to change the expected "instruction", "input",
+            and "output" column names to the actual column names in the dataset. Default is None,
+            keeping the default column names.
+        masking_strategy (Optional[str]): masking strategy to use for model training.
+            Must be one of: `train_on_all`, `train_on_assistant`, `train_on_last`.
+            Default is "train_on_all".
+
+            - ``train_on_all``: both user and assistant messages are unmasked
+            - ``train_on_assistant``: user messages are masked, only assistant messages are unmasked
+            - ``train_on_last``: only the last assistant message is unmasked
+
+    Raises:
+        ValueError:
+            If ``column_map`` is provided and ``instruction`` not in ``column_map``, or
+                ``output`` not in ``column_map``
+    """
+
+    def __init__(
+        self,
+        train_on_input: Optional[bool] = None,
+        column_map: Optional[dict[str, str]] = None,
+        masking_strategy: Optional[str] = "train_on_all",
+    ):
+        if train_on_input is not None:
+            warn(
+                "train_on_input is deprecated and will be removed in a future release. "
+                "Please use masking_strategy instead."
+                "You should replace train_on_input=True with masking_strategy='train_on_all', and "
+                "train_on_input=False with masking_strategy='train_on_assistant'."
+                "For backwards compatibility, if you pass both train_on_input and masking_strategy, "
+                "the value of masking_strategy will be ignored until torchtune 0.7. ",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            masking_strategy = (
+                "train_on_all" if train_on_input else "train_on_assistant"
+            )
+        self.masking_strategy = masking_strategy
+        # import pdb; pdb.set_trace()
+        if column_map:
+            if "problem" not in column_map:
+                raise ValueError(
+                    f"Expected a key of 'problem' in column_map but found {column_map.keys()}."
+                )
+            # input is optional
+            if "deepseek_reasoning" not in column_map:
+                raise ValueError(
+                    f"Expected a key of 'deepseek_reasoning' in column_map but found {column_map.keys()}."
+                )
+
+            if "deepseek_solution" not in column_map:
+                raise ValueError(
+                    f"Expected a key of 'deepseek_solution' in column_map but found {column_map.keys()}."
+                )
+            self._column_map = column_map
+        else:
+            self._column_map = {
+                "problem": "problem",
+                "deepseek_reasoning": "deepseek_reasoning",
+                "deepseek_solution": "deepseek_solution",
+            }
+        self.template = {
+            "prompt_input": (
+                "Below is an instruction that describes a task, paired with an input that provides further context. "  # change this
+                "Write a response that appropriately completes the request.\n\n"
+                "### Problem:\n{problem}:\n"
+            ),
+            "prompt_no_input": (
+                "Below is an instruction that describes a task. " # change this
+                "Write a response that appropriately completes the request.\n\n"
+                "### Instruction:\n{problem}\n\n### Response:\n"
+            ),
+        }
+
+    def __call__(self, sample: Mapping[str, Any]) -> Mapping[str, Any]:
+        key_input = self._column_map.get("problem", "problem")
+        if key_input in sample and sample[key_input]:
+            prompt = self.template["prompt_input"].format(
+                problem=sample[self._column_map["problem"]],
+                # input=sample[key_input],
+            )
+        else:
+            prompt = self.template["prompt_no_input"].format(
+                problem=sample[self._column_map["problem"]]
+            )
+
+        # import pdb; pdb.set_trace()
+        messages = [
+            Message(
+                role="user",
+                content=prompt,
+                eot=True,
+            ),
+            Message(
+                role="assistant",
+                content=sample[self._column_map["deepseek_solution"]],
+                eot=True,
+            ),
+        ]
+        mask_messages(messages, self.masking_strategy)
+        return {"messages": messages}
+
+
+
+        
+
 def validate_messages(
     messages: list[Message],
 ) -> None:

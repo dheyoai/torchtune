@@ -23,8 +23,11 @@ from torchtune.datasets._text_completion import (
     TextCompletionDataset,
 )
 from torchtune.datasets._wikitext import wikitext_dataset
+from torchtune.datasets._open_thoughts import open_thoughts_dataset
+
 
 __all__ = [
+    "open_thoughts_dataset",
     "alpaca_dataset",
     "alpaca_cleaned_dataset",
     "grammar_dataset",

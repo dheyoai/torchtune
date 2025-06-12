@@ -27,3 +27,5 @@ tune run --nproc_per_node 2 qat_distributed --config recipes/configs/<path_to_ya
 
 The checkpoints and trainer states will be stored in the path mentioned under `output_dir` in the above yaml config file.
 
+All quantization modes supported by torchtune are in [torchtune/training/quantization.py](torchtune/training/quantization.py)
+
