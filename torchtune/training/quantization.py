@@ -27,6 +27,9 @@ from torchao.quantization.qat import (
     Int4WeightOnlyQATQuantizer,
     Int8DynActInt4WeightQATQuantizer,
 )
+
+from .dheyo_qat import Int8DynActInt6WeightQATQuantizer
+
 from torchao.quantization.qat.linear import (
     disable_4w_fake_quant,
     disable_8da4w_fake_quant,
@@ -44,6 +47,7 @@ __all__ = [
     "Int4WeightOnlyQATQuantizerModuleSwap",
     "Int8DynActInt4WeightQuantizer",
     "Int8DynActInt4WeightQATQuantizer",
+    "Int8DynActInt6WeightQATQuantizer",
     "Int8DynActInt4WeightQATQuantizerModuleSwap",
 ]
 
@@ -80,6 +84,7 @@ class Int8DynActInt4WeightQuantizer:
 
 _quantizer_to_mode[Int8DynActInt4WeightQuantizer] = "8da4w"
 _quantizer_to_mode[Int8DynActInt4WeightQATQuantizer] = "8da4w-qat"
+_quantizer_to_mode[Int8DynActInt6WeightQATQuantizer] = "8da6w-qat"
 _quantizer_mode_to_disable_fake_quant["8da4w-qat"] = disable_8da4w_fake_quant
 _quantizer_mode_to_enable_fake_quant["8da4w-qat"] = enable_8da4w_fake_quant
 

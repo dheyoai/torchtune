@@ -901,7 +901,7 @@ class OpenThoughtsToMessages(Transform):
                 "train_on_all" if train_on_input else "train_on_assistant"
             )
         self.masking_strategy = masking_strategy
-        # import pdb; pdb.set_trace()
+
         if column_map:
             if "problem" not in column_map:
                 raise ValueError(
@@ -958,7 +958,7 @@ class OpenThoughtsToMessages(Transform):
             ),
             Message(
                 role="assistant",
-                content=sample[self._column_map["deepseek_solution"]],
+                content=sample[self._column_map["deepseek_solution"]], ## need to add reasoning + solution in case of reasoning models!!
                 eot=True,
             ),
         ]
@@ -967,7 +967,7 @@ class OpenThoughtsToMessages(Transform):
 
 
 
-        
+
 
 def validate_messages(
     messages: list[Message],
