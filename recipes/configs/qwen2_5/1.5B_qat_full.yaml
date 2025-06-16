@@ -24,7 +24,7 @@ tokenizer:
   _component_: torchtune.models.qwen2_5.qwen2_5_tokenizer
   path: /shareddata/dheyo/shivanvitha/torchtune/models/Qwen2.5-1.5B-Instruct/vocab.json
   merges_file: /shareddata/dheyo/shivanvitha/torchtune/models/Qwen2.5-1.5B-Instruct/merges.txt
-  max_seq_len: null
+  max_seq_len: 1024
 
 # Checkpointer
 checkpointer:
@@ -54,10 +54,10 @@ batch_size_val: ${batch_size}
 # Fine-tuning arguments
 epochs: 1
 max_steps_per_epoch: null
-batch_size: 64
+batch_size: 32
 # QAT arguments
 quantizer:
-  _component_: torchtune.training.quantization.Int8DynActInt4WeightQATQuantizer
+  _component_: torchtune.training.quantization.Int8DynActIntVarWeightQATQuantizer
   groupsize: 256
   
 gradient_accumulation_steps: 1  # Use to increase effective batch size
@@ -73,7 +73,7 @@ loss:
 device: cuda
 
 # Memory management / performance
-enable_activation_checkpointing: True  # True reduces memory
+enable_activation_checkpointing: False  # True reduces memory
 enable_activation_offloading: False  # True reduces memory
 dtype: bf16
 clip_grad_norm: null
