@@ -1,17 +1,16 @@
 from typing import Any, Optional
-
+import pdb
 import torch
 import torch.nn.functional as F
 
 from torchao.dtypes.utils import is_device
 from torchao.quantization.GPTQ import (
     Int8DynActInt4WeightLinear,
-    Int8DynActInt6WeightLinear,
     WeightOnlyInt4Linear,
-    _check_linear_int4_k,
+    # _check_linear_int4_k,
     _replace_linear_8da4w,
     _replace_linear_int4,
-    groupwise_affine_quantize_tensor,
+    # groupwise_affine_quantize_tensor,
 )
 from torchao.quantization.quant_primitives import (
     TorchAODType,
@@ -27,7 +26,7 @@ from torchao.quantization.qat.utils import (
     _get_qmin_qmax,
 )
 
-from torchao.quantization.qat.linear import FakeQuantizedLinear, _LegacyQATQuantizer
+from torchao.quantization.qat.linear import FakeQuantizedLinear, _LegacyQATQuantizer, Int8DynActInt4WeightQATLinear
 from torchao.quantization.quant_primitives import (
     MappingType,
     dequantize_affine,
@@ -48,13 +47,56 @@ from torchao.quantization.utils import (
 from typing import Any, Callable, Dict, List, Optional, Type, Tuple
 import torch.nn as nn
 from torchao.float8.float8_linear import Float8Linear
+import json
+
 
 # =========================================================
 # |   Linear int8 dynamic activations + int6 weight QAT   |
 # =========================================================
+bit_map = {
+    'Q2_K': 2,
+    'Q3_K': 3,
+    'Q3_K_M': 3,
+    'Q3_K_S': 3,
+    'Q3_K_L': 3,
+    'Q4_0': 4,
+    'Q4_1': 4,
+    'Q4_K': 4,
+    'Q4_K_M': 4,
+    'Q4_K_S': 4,
+    'Q5_0': 5,
+    'Q5_1': 5,
+    'Q5_K': 5,
+    'Q5_K_M': 5,
+    'Q5_K_S': 5,
+    'Q6_K': 6,
+    'Q8_0': 8,
+    'Q8_K': 8,
+    'Q8_1': 8,
+    'F16': 16,
+    'F32': 32
+}
 
 
-def linear_forward_8da6w(
+def _check_linear_int4_k(k, group_size=1, inner_k_tiles=None):
+    """
+    Check if the dimensions are compatible with int4 quantization.
+
+    Args:
+        k: The dimension size to check
+        group_size: The group size for quantization
+        inner_k_tiles: The inner k tiles size
+
+    Returns:
+        bool: Whether the dimensions are compatible
+    """
+    k_divisible_by_group_size = k % group_size == 0
+    if inner_k_tiles is not None:
+        k_divisible_by_16_times_inner_k_tiles = k % (inner_k_tiles * 16) == 0
+        return k_divisible_by_group_size and k_divisible_by_16_times_inner_k_tiles
+    return k_divisible_by_group_size
+
+def linear_forward_8davarw(
     x,
     weight_int8,
     bias,
@@ -63,6 +105,7 @@ def linear_forward_8da6w(
     out_features,
     groupsize,
     output_precision,
+    bits
 ):
     # uses fp32 to match torchao.quantization.quant_api._int8_asymm_per_token_quant
     # and activation_scale_dtype in QAT configs
@@ -78,12 +121,12 @@ def linear_forward_8da6w(
 
     # TODO: better API
     # weight_int8 = torch.ops.quantized_decomposed.unpack_int4_to_int8(weight_int4packed)
-    n_bit = 6
+    n_bit = bits
     quant_min = -(2 ** (n_bit - 1))
     quant_max = 2 ** (n_bit - 1) - 1
     block_size = (1, groupsize)
 
-    w_dq = dequantize_affine(
+    w_dq = dequantize_affine(  ### check this once
         weight_int8,
         block_size,
         scales,
@@ -106,7 +149,7 @@ def linear_forward_8da6w(
 
 
 ### int 6 weights linear
-class Int8DynActInt6WeightLinear(torch.nn.Module):
+class Int8DynActIntVarWeightLinear(torch.nn.Module):
     __constants__ = ["in_features", "out_features"]
 
     in_features: int
@@ -134,6 +177,7 @@ class Int8DynActInt6WeightLinear(torch.nn.Module):
         groupsize: int = 256,
         precision: torch.dtype = torch.float32,
         scales_precision: torch.dtype = torch.float32,
+        bits: int = 4
     ) -> None:
         super().__init__()
         # always pad if needed since it becomes a noop at runtime if not needed
@@ -144,6 +188,7 @@ class Int8DynActInt6WeightLinear(torch.nn.Module):
         # in_features = _calc_padded_size_linear_int4(
         #    in_features, groupsize
         # )
+        self.bits = bits
         self.in_features = in_features
         self.out_features = out_features
         # TODO: align groupsize naming
@@ -185,7 +230,7 @@ class Int8DynActInt6WeightLinear(torch.nn.Module):
         input = input.to(self.precision)
         # padding is removed for perf
         # input = F.pad(input, pad=(0, self.in_features - self.origin_in_features))
-        return linear_forward_8da6w(
+        return linear_forward_8davarw(
             input,
             self.weight,
             self.bias,
@@ -194,12 +239,13 @@ class Int8DynActInt6WeightLinear(torch.nn.Module):
             self.out_features,
             self.groupsize,
             self.precision,
+            self.bits
         )
 
 
 
 
-def _get_8da6w_activation_config(qparams_precision: torch.dtype) -> FakeQuantizeConfig:
+def _get_8davarw_activation_config(qparams_precision: torch.dtype) -> FakeQuantizeConfig:
     """
     Return the activation `FakeQuantizeConfig` for `Int8DynActInt4WeightQATQuantizer`.
     """
@@ -213,21 +259,88 @@ def _get_8da6w_activation_config(qparams_precision: torch.dtype) -> FakeQuantize
     )
 
 
-def _get_8da6w_weight_config(
+def _get_8davarw_weight_config(
     group_size: int,
     qparams_precision: torch.dtype,
+    bits: int
 ) -> FakeQuantizeConfig:
     """
     Return the weight `FakeQuantizeConfig` for `Int8DynActInt4WeightQATQuantizer`.
     """
-    return FakeQuantizeConfig(
-        dtype=TorchAODType.INT6,
-        group_size=group_size,
-        is_symmetric=True,
-        is_dynamic=True,
-        scale_precision=qparams_precision,
-        zero_point_precision=qparams_precision,
-    )
+    if bits == 2:
+        return FakeQuantizeConfig(
+            dtype=TorchAODType.INT2,
+            group_size=group_size,
+            is_symmetric=True,
+            is_dynamic=True,
+            scale_precision=qparams_precision,
+            zero_point_precision=qparams_precision,
+        )
+    elif bits == 3:
+        return FakeQuantizeConfig(
+            dtype=TorchAODType.INT3,
+            group_size=group_size,
+            is_symmetric=True,
+            is_dynamic=True,
+            scale_precision=qparams_precision,
+            zero_point_precision=qparams_precision,
+        )
+    elif bits == 4:
+        return FakeQuantizeConfig(
+            dtype=TorchAODType.INT4,
+            group_size=group_size,
+            is_symmetric=True,
+            is_dynamic=True,
+            scale_precision=qparams_precision,
+            zero_point_precision=qparams_precision,
+        )
+    elif bits == 5:
+        return FakeQuantizeConfig(
+            dtype=TorchAODType.INT5,
+            group_size=group_size,
+            is_symmetric=True,
+            is_dynamic=True,
+            scale_precision=qparams_precision,
+            zero_point_precision=qparams_precision,
+        )
+    elif bits == 6:
+        return FakeQuantizeConfig(
+            dtype=TorchAODType.INT6,
+            group_size=group_size,
+            is_symmetric=True,
+            is_dynamic=True,
+            scale_precision=qparams_precision,
+            zero_point_precision=qparams_precision,
+        )
+    elif bits == 8:
+        return FakeQuantizeConfig(
+            dtype=torch.int8,
+            group_size=group_size,
+            is_symmetric=True,
+            is_dynamic=True,
+            scale_precision=qparams_precision,
+            zero_point_precision=qparams_precision,
+        )
+    elif bits == 16:
+        return FakeQuantizeConfig(
+            dtype=torch.float16,
+            group_size=group_size,
+            is_symmetric=True,
+            is_dynamic=True,
+            scale_precision=qparams_precision,
+            zero_point_precision=qparams_precision,
+        )
+    elif bits == 32:
+        return FakeQuantizeConfig(
+            dtype=torch.float32,
+            group_size=group_size,
+            is_symmetric=True,
+            is_dynamic=True,
+            scale_precision=qparams_precision,
+            zero_point_precision=qparams_precision,
+        )
+    else:
+        raise AssertionError(f"Invalid quantization scheme - {bits} precision")
 
 
 
@@ -265,7 +378,7 @@ def _replace_with_custom_fn_if_matches_filter(
     if filter_fn(model, cur_fqn[:-1]):
         if device is not None:
             model.to(device=device)  # move to device before quantization
-        model = replacement_fn(model, *extra_args)
+        model = replacement_fn(model, cur_fqn[:-1], *extra_args)
         return model
     else:
         named_children_list = list(model.named_children())
@@ -286,8 +399,47 @@ def _replace_with_custom_fn_if_matches_filter(
 
 
 
+def convert_layer_name(name: str) -> str:
+    mapping = {
+        'layers.{}.attn.q_proj': 'blk.{}.attn_q',
+        'layers.{}.attn.q_proj': 'blk.{}.attn_q',
+        'layers.{}.attn.k_proj': 'blk.{}.attn_k',
+        'layers.{}.attn.k_proj': 'blk.{}.attn_k',
+        'layers.{}.attn.v_proj': 'blk.{}.attn_v',
+        'layers.{}.attn.v_proj': 'blk.{}.attn_v',
+        'layers.{}.attn.output_proj': 'blk.{}.attn_output',
+        'layers.{}.mlp.w1': 'blk.{}.ffn_gate',
+        'layers.{}.mlp.w3': 'blk.{}.ffn_up',
+        'layers.{}.mlp.w2': 'blk.{}.ffn_down',
+        'output': 'output',
+        'tok_embeddings': 'token_embd',
+        "norm.scale": "output_norm",
+    }
+
+    if "layers." in name:
+        for old_pattern, new_pattern in mapping.items():
+            layer_num = name.split('layers.')[1].split('.')[0]
+            if old_pattern.format(layer_num) in name:
+                try:
+                    mapped_pattern = new_pattern.format(layer_num)
+                    # if "blk." not in mapped_pattern:
+                    #     continue
+                    return mapped_pattern
+                except IndexError:
+                    continue
+    else:
+        # try:
+        # print(name)
+        return mapping[name]
+        # except:
+            # import pdb; pdb.set_trace()
+    
+    return name
+
+
+
 ################ is called in prepare() for 8avarw #################
-def _replace_linear_8da6w(
+def _replace_linear_8davarw(
     module: torch.nn.Module,
     groupsize: int,
     padding_allowed: bool,
@@ -304,7 +456,23 @@ def _replace_linear_8da6w(
             _check_linear_int4_k(child.in_features, groupsize) or padding_allowed ## check if something has to be done here
         )
 
-    def replacement_fn(child: torch.nn.Module) -> torch.nn.Module:
+    def replacement_fn(child: torch.nn.Module, layer_type) -> torch.nn.Module:
+        ### get layer_name -> quant_scheme mapping here ------------->
+        ## sample layer_type = 'layers.0.attn.q_proj'
+        with open('/shareddata/dheyo/shivanvitha/torchtune/quant_config_example.json', 'r') as quant_file:
+            quant_map = json.load(quant_file)
+
+        # import pdb; pdb.set_trace()
+        try:
+            quant_key = convert_layer_name(layer_type)
+            quant_value = quant_map[quant_key + ".weight"]
+            bits = bit_map[quant_value]
+            # pdb.set_trace()
+            print(f"{layer_type} -> {quant_key} -> {quant_value}")
+
+        except:
+            bits = 8 ## default
+
         new_linear = linear_class(
             child.in_features,
             child.out_features,
@@ -313,6 +481,7 @@ def _replace_linear_8da6w(
             groupsize=groupsize,
             precision=precision,
             scales_precision=scales_precision,
+            bits=bits ### replace with the mapping
         )
         # In distributed training, the model may be instantiated
         # on the meta device, in which case there is no need to
@@ -322,11 +491,12 @@ def _replace_linear_8da6w(
             new_linear.bias = child.bias
         return new_linear
 
+
     _replace_with_custom_fn_if_matches_filter(module, replacement_fn, filter_fn)
 
 
 
-class Int8DynActInt6WeightQATQuantizer(_LegacyQATQuantizer):
+class Int8DynActIntVarWeightQATQuantizer(_LegacyQATQuantizer):
     """
     Quantizer for performing QAT on a model, where linear layers have int8
     dynamic per token fake quantized activations and int4 fake quantized
@@ -346,50 +516,91 @@ class Int8DynActInt6WeightQATQuantizer(_LegacyQATQuantizer):
         self.precision: torch.dtype = precision
         self.scales_precision: torch.dtype = scales_precision
 
+
     def prepare(
         self, model: torch.nn.Module, *args: Any, **kwargs: Any
     ) -> torch.nn.Module:
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
 
-        _replace_linear_8da6w(
+        _replace_linear_8davarw(
             model,
             self.groupsize,
             self.padding_allowed,
             self.precision,
             self.scales_precision,
-            Int8DynActInt6WeightQATLinear,
+            Int8DynActIntVarWeightQATLinear,
             copy_weights=True,
         )
-        import pdb; pdb.set_trace()
-        
+        # import pdb; pdb.set_trace()
+        f = open("/shareddata/dheyo/shivanvitha/torchtune/dummy1.md", 'w')
+        f.write(str(model))
+        f.close()
         return model
+
 
     def convert(
         self, model: torch.nn.Module, *args: Any, **kwargs: Any
     ) -> torch.nn.Module:
-        self._convert_qat_linear_8da6w(model)
+        self._convert_qat_linear_8davarw(model)
         return model
 
-    def _convert_qat_linear_8da6w(self, module: torch.nn.Module):
+    def _convert_qat_linear_8davarw(self, module: torch.nn.Module): ### modify this method accordingly
         """
         Replace all `Int8DynActInt4WeightQATLinear` with `Int8DynActInt4WeightLinear`.
         """
+
+        with open('/shareddata/dheyo/shivanvitha/torchtune/quant_config_example.json', 'r') as quant_file:
+            quant_map = json.load(quant_file)
+        layer_counter = 0
         for name, child in module.named_children():
             # import pdb; pdb.set_trace()
-            if isinstance(child, Int8DynActInt6WeightQATLinear):
+            #### get layer_name -> quant_scheme mapping here and set it to "bits" and pass to the classes/methods below -------->
+                # print(f"{name} -> {quant_key}")
+                # bits = 8
+
+            if isinstance(child, Int8DynActIntVarWeightQATLinear):
+
+                try:
+                    quant_key = convert_layer_name(name)
+                    print(f"{name} -> {quant_key}")
+                    quant_value = quant_map[quant_key + ".weight"]
+                    bits = bit_map[quant_value]
+                except Exception as e:
+                    # pdb.set_trace()
+                    # print(str(e))
+                    # bits = 8
+                    try:
+                        print(name)
+                        if "proj" in name:
+                            name = f"layers.{layer_counter}.attn.{name}"
+                        elif "w1" in name or "w2" in name or "w3" in name:
+                            name = f"layers.{layer_counter}.mlp.{name}"
+                            if "w3" in name:
+                                layer_counter += 1
+
+                        quant_key = convert_layer_name(name)
+                        print(f"{name} -> {quant_key}")
+                        quant_value = quant_map[quant_key + ".weight"]
+                        bits = bit_map[quant_value]
+                    except:
+                        bits = 8
+                        pdb.set_trace()
+
+
                 config = child.weight_fake_quantizer.config
-                quantized_linear = Int8DynActInt6WeightLinear(
+                quantized_linear = Int8DynActIntVarWeightLinear(
                     child.in_features,
                     child.out_features,
                     child.bias is not None,
                     groupsize=config.group_size,
                     precision=child.weight.dtype,
                     scales_precision=config.scale_precision,
+                    bits=bits ## set it to bits
                 )
                 setattr(module, name, quantized_linear)
 
                 # Load weights and qparams into quantized linear
-                n_bit = 6
+                n_bit = bits
                 (qmin, qmax) = _get_qmin_qmax(n_bit)
                 (s, zp) = get_group_qparams_symmetric(
                     child.weight,
@@ -417,18 +628,18 @@ class Int8DynActInt6WeightQATQuantizer(_LegacyQATQuantizer):
                 if child.bias is not None:
                     quantized_linear.bias = child.bias
             else:
-                self._convert_qat_linear_8da6w(child)
+                self._convert_qat_linear_8davarw(child)
 
     def get_activation_fake_quantize_config(self) -> Optional[FakeQuantizeConfig]:
-        return _get_8da6w_activation_config(self.scales_precision)
+        return _get_8davarw_activation_config(self.scales_precision)
 
     def get_weight_fake_quantize_config(self) -> Optional[FakeQuantizeConfig]:
-        return _get_8da6w_weight_config(self.groupsize, self.scales_precision)
+        return _get_8davarw_weight_config(self.groupsize, self.scales_precision, bits=6)
 
 
 
 ###### int 6 weights
-class Int8DynActInt6WeightQATLinear(FakeQuantizedLinear):
+class Int8DynActIntVarWeightQATLinear(FakeQuantizedLinear):
     """
     This module implements a linear layer with int8 dynamic per token fake
     quantized activations with int4 fake quantized grouped per channel weights.
@@ -452,11 +663,12 @@ class Int8DynActInt6WeightQATLinear(FakeQuantizedLinear):
         groupsize: int = 256,
         precision: torch.dtype = torch.float32,
         scales_precision: torch.dtype = torch.float32,
+        bits: int = 4
     ) -> None:
         # Use torch.float32 to match torchao.quantization.quant_api._int8_asymm_per_token_quant,
         # which is used in PTQ routines
-        activation_config = _get_8da6w_activation_config(torch.float32)
-        weight_config = _get_8da6w_weight_config(groupsize, scales_precision)
+        activation_config = _get_8davarw_activation_config(torch.float32)
+        weight_config = _get_8davarw_weight_config(groupsize, scales_precision, bits=bits)
         super().__init__(
             in_features,
             out_features,

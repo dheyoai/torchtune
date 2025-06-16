@@ -189,3 +189,9 @@ cover/
 wandb/
 tune_env
 models
+dummy.txt 
+dummy1.md
+test_mapping.py 
+weight_range.md
+weights_check.py
+test.py
