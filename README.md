@@ -5,7 +5,7 @@ git clone git@github.com:dheyoai/torchtune.git
 ```
 
 ```
-pip install .
+pip install -e .
 ```
 
 ## For AMD GPUs
