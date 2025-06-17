@@ -54,27 +54,27 @@ import json
 # |   Linear int8 dynamic activations + int6 weight QAT   |
 # =========================================================
 bit_map = {
-    'Q2_K': 2,
-    'Q3_K': 3,
-    'Q3_K_M': 3,
-    'Q3_K_S': 3,
-    'Q3_K_L': 3,
-    'Q4_0': 4,
-    'Q4_1': 4,
-    'Q4_K': 4,
-    'Q4_K_M': 4,
-    'Q4_K_S': 4,
-    'Q5_0': 5,
-    'Q5_1': 5,
-    'Q5_K': 5,
-    'Q5_K_M': 5,
-    'Q5_K_S': 5,
-    'Q6_K': 6,
-    'Q8_0': 8,
-    'Q8_K': 8,
-    'Q8_1': 8,
-    'F16': 16,
-    'F32': 32
+    'Q2_K': {'bits': 2, 'group_size': 256},
+    'Q3_K': {'bits': 2, 'group_size': 256},
+    'Q3_K_M': {'bits': 2, 'group_size': 256},
+    'Q3_K_S': {'bits': 2, 'group_size': 256},
+    'Q3_K_L': {'bits': 2, 'group_size': 256},
+    'Q4_0': {'bits': 2, 'group_size': 32},
+    'Q4_1': {'bits': 2, 'group_size': 32},
+    'Q4_K': {'bits': 2, 'group_size': 256},
+    'Q4_K_M': {'bits': 2, 'group_size': 256},
+    'Q4_K_S': {'bits': 2, 'group_size': 256},
+    'Q5_0': {'bits': 2, 'group_size': 32},
+    'Q5_1': {'bits': 2, 'group_size': 32},
+    'Q5_K': {'bits': 2, 'group_size': 256},
+    'Q5_K_M': {'bits': 2, 'group_size': 256},
+    'Q5_K_S': {'bits': 2, 'group_size': 256},
+    'Q6_K': {'bits': 2, 'group_size': 256},
+    'Q8_0': {'bits': 2, 'group_size': 32},
+    'Q8_K': {'bits': 2, 'group_size': 256},
+    'Q8_1': {'bits': 2, 'group_size': 32},
+    'F16': {'bits': 16, 'group_size': 256},
+    'F32': {'bits': 32, 'group_size': 256}
 }
 
 
@@ -466,9 +466,9 @@ def _replace_linear_8davarw(
         try:
             quant_key = convert_layer_name(layer_type)
             quant_value = quant_map[quant_key + ".weight"]
-            bits = bit_map[quant_value]
+            bits, group_size = bit_map[quant_value]["bits"], bit_map[quant_value]["group_size"]
             # pdb.set_trace()
-            print(f"{layer_type} -> {quant_key} -> {quant_value}")
+            print(f"{layer_type} -> {quant_key} -> {quant_value} -> {group_size}")
 
         except:
             bits = 8 ## default
@@ -478,7 +478,7 @@ def _replace_linear_8davarw(
             child.out_features,
             bias=child.bias is not None,
             device=child.weight.device,
-            groupsize=groupsize,
+            groupsize=group_size,
             precision=precision,
             scales_precision=scales_precision,
             bits=bits ### replace with the mapping
@@ -580,8 +580,8 @@ class Int8DynActIntVarWeightQATQuantizer(_LegacyQATQuantizer):
 
                 quant_key = convert_layer_name(name_proxy)
                 quant_value = quant_map[quant_key + ".weight"]
-                bits = bit_map[quant_value]
-                print(f"{name} -> {quant_key} -> {bits} bits")
+                bits, group_size = bit_map[quant_value]["bits"], bit_map[quant_value]["group_size"]
+                print(f"{name} -> {quant_key} -> {bits} bits -> {group_size}")
 
 
                 # bits = 4
@@ -591,7 +591,7 @@ class Int8DynActIntVarWeightQATQuantizer(_LegacyQATQuantizer):
                     child.in_features,
                     child.out_features,
                     child.bias is not None,
-                    groupsize=config.group_size,
+                    groupsize=group_size,
                     precision=child.weight.dtype,
                     scales_precision=config.scale_precision,
                     bits=bits ## set it to bits
@@ -635,11 +635,12 @@ class Int8DynActIntVarWeightQATQuantizer(_LegacyQATQuantizer):
 
                 self._convert_qat_linear_8davarw(child)
 
-    def get_activation_fake_quantize_config(self) -> Optional[FakeQuantizeConfig]:
-        return _get_8davarw_activation_config(self.scales_precision)
+    # def get_activation_fake_quantize_config(self) -> Optional[FakeQuantizeConfig]:
+    #     return _get_8davarw_activation_config(self.scales_precision)
 
-    def get_weight_fake_quantize_config(self) -> Optional[FakeQuantizeConfig]:
-        return _get_8davarw_weight_config(self.groupsize, self.scales_precision)
+    # def get_weight_fake_quantize_config(self) -> Optional[FakeQuantizeConfig]:
+    #     print("This method is called")
+    #     return _get_8davarw_weight_config(self.groupsize, self.scales_precision)
 
 
 
