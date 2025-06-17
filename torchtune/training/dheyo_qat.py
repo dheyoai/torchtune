@@ -515,6 +515,8 @@ class Int8DynActIntVarWeightQATQuantizer(_LegacyQATQuantizer):
         self.padding_allowed: bool = padding_allowed
         self.precision: torch.dtype = precision
         self.scales_precision: torch.dtype = scales_precision
+        self.layer_counter = 0
+
 
 
     def prepare(
@@ -549,43 +551,40 @@ class Int8DynActIntVarWeightQATQuantizer(_LegacyQATQuantizer):
         Replace all `Int8DynActInt4WeightQATLinear` with `Int8DynActInt4WeightLinear`.
         """
 
+
+        # for name, param in module.named_modules():
+        #     if isinstance(param, Int8DynActIntVarWeightQATLinear):
+        #         print(f"NAME: {name}")
+
         with open('/shareddata/dheyo/shivanvitha/torchtune/quant_config_example.json', 'r') as quant_file:
             quant_map = json.load(quant_file)
-        layer_counter = 0
+
         for name, child in module.named_children():
+
             # import pdb; pdb.set_trace()
             #### get layer_name -> quant_scheme mapping here and set it to "bits" and pass to the classes/methods below -------->
                 # print(f"{name} -> {quant_key}")
                 # bits = 8
 
             if isinstance(child, Int8DynActIntVarWeightQATLinear):
+                print(f"{name}")
 
-                try:
-                    quant_key = convert_layer_name(name)
-                    print(f"{name} -> {quant_key}")
-                    quant_value = quant_map[quant_key + ".weight"]
-                    bits = bit_map[quant_value]
-                except Exception as e:
-                    # pdb.set_trace()
-                    # print(str(e))
-                    # bits = 8
-                    try:
-                        print(name)
-                        if "proj" in name:
-                            name = f"layers.{layer_counter}.attn.{name}"
-                        elif "w1" in name or "w2" in name or "w3" in name:
-                            name = f"layers.{layer_counter}.mlp.{name}"
-                            if "w3" in name:
-                                layer_counter += 1
 
-                        quant_key = convert_layer_name(name)
-                        print(f"{name} -> {quant_key}")
-                        quant_value = quant_map[quant_key + ".weight"]
-                        bits = bit_map[quant_value]
-                    except:
-                        bits = 8
-                        pdb.set_trace()
 
+                if "proj" in name:
+                    name_proxy = f"layers.{self.layer_counter}.attn.{name}"
+                elif "w1" in name or "w2" in name or "w3" in name:
+                    name_proxy = f"layers.{self.layer_counter}.mlp.{name}"
+                    if "w3" in name:
+                        self.layer_counter += 1
+
+                quant_key = convert_layer_name(name_proxy)
+                quant_value = quant_map[quant_key + ".weight"]
+                bits = bit_map[quant_value]
+                print(f"{name} -> {quant_key} -> {bits} bits")
+
+
+                # bits = 4
 
                 config = child.weight_fake_quantizer.config
                 quantized_linear = Int8DynActIntVarWeightLinear(
@@ -627,14 +626,20 @@ class Int8DynActIntVarWeightQATQuantizer(_LegacyQATQuantizer):
                 quantized_linear.zeros = zp
                 if child.bias is not None:
                     quantized_linear.bias = child.bias
+                
+                # print(f"Number of named_modules = {len(list(module.named_modules()))}")
+
             else:
+                # print(f"CHILD in ELSE: {child}")
+                # print(f"Number of named_modules = {len(list(module.named_modules()))}")
+
                 self._convert_qat_linear_8davarw(child)
 
     def get_activation_fake_quantize_config(self) -> Optional[FakeQuantizeConfig]:
         return _get_8davarw_activation_config(self.scales_precision)
 
     def get_weight_fake_quantize_config(self) -> Optional[FakeQuantizeConfig]:
-        return _get_8davarw_weight_config(self.groupsize, self.scales_precision, bits=6)
+        return _get_8davarw_weight_config(self.groupsize, self.scales_precision)
 
 
 
