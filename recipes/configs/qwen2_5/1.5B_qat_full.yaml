@@ -54,7 +54,7 @@ batch_size_val: ${batch_size}
 # Fine-tuning arguments
 epochs: 1
 max_steps_per_epoch: null
-batch_size: 32
+batch_size: 16
 # QAT arguments
 quantizer:
   _component_: torchtune.training.quantization.Int8DynActIntVarWeightQATQuantizer

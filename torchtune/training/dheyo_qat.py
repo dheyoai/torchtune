@@ -16,6 +16,9 @@ from torchao.quantization.quant_primitives import (
     TorchAODType,
     ZeroPointDomain,
 )
+
+from torchtune.utils.dheyo_quant_primitives import TorchAODTypeFloat
+
 from torchao.quantization.unified import TwoStepQuantizer
 from torchao.quantization.utils import get_group_qparams_symmetric
 from torchao.utils import TORCH_VERSION_AT_LEAST_2_6
@@ -48,31 +51,32 @@ from typing import Any, Callable, Dict, List, Optional, Type, Tuple
 import torch.nn as nn
 from torchao.float8.float8_linear import Float8Linear
 import json
-
+from torchtune.training.dheyo_qat_linear import FakeQuantizedLinearWrapper
 
 # =========================================================
 # |   Linear int8 dynamic activations + int6 weight QAT   |
 # =========================================================
 bit_map = {
     'Q2_K': {'bits': 2, 'group_size': 256},
-    'Q3_K': {'bits': 2, 'group_size': 256},
-    'Q3_K_M': {'bits': 2, 'group_size': 256},
-    'Q3_K_S': {'bits': 2, 'group_size': 256},
-    'Q3_K_L': {'bits': 2, 'group_size': 256},
-    'Q4_0': {'bits': 2, 'group_size': 32},
-    'Q4_1': {'bits': 2, 'group_size': 32},
-    'Q4_K': {'bits': 2, 'group_size': 256},
-    'Q4_K_M': {'bits': 2, 'group_size': 256},
-    'Q4_K_S': {'bits': 2, 'group_size': 256},
-    'Q5_0': {'bits': 2, 'group_size': 32},
-    'Q5_1': {'bits': 2, 'group_size': 32},
-    'Q5_K': {'bits': 2, 'group_size': 256},
-    'Q5_K_M': {'bits': 2, 'group_size': 256},
-    'Q5_K_S': {'bits': 2, 'group_size': 256},
-    'Q6_K': {'bits': 2, 'group_size': 256},
-    'Q8_0': {'bits': 2, 'group_size': 32},
-    'Q8_K': {'bits': 2, 'group_size': 256},
-    'Q8_1': {'bits': 2, 'group_size': 32},
+    'Q3_K': {'bits': 3, 'group_size': 256},
+    'Q3_K_M': {'bits': 3, 'group_size': 256},
+    'Q3_K_S': {'bits': 3, 'group_size': 256},
+    'Q3_K_L': {'bits': 3, 'group_size': 256},
+    'Q4_0': {'bits': 4, 'group_size': 32},
+    'Q4_1': {'bits': 4, 'group_size': 32},
+    'Q4_K': {'bits': 4, 'group_size': 256},
+    'Q4_K_M': {'bits': 4, 'group_size': 256},
+    'Q4_K_S': {'bits': 4, 'group_size': 256},
+    'Q5_0': {'bits': 5, 'group_size': 32},
+    'Q5_1': {'bits': 5, 'group_size': 32},
+    'Q5_K': {'bits': 5, 'group_size': 256},
+    'Q5_K_M': {'bits': 5, 'group_size': 256},
+    'Q5_K_S': {'bits': 5, 'group_size': 256},
+    'Q6_K': {'bits': 6, 'group_size': 256},
+    'Q8_0': {'bits': 8, 'group_size': 32},
+    'Q8_K': {'bits': 8, 'group_size': 256},
+    'Q8_1': {'bits': 8, 'group_size': 32},
+    'MXFP4': {'bits': 4, 'group_size': 32},
     'F16': {'bits': 16, 'group_size': 256},
     'F32': {'bits': 32, 'group_size': 256}
 }
@@ -96,7 +100,7 @@ def _check_linear_int4_k(k, group_size=1, inner_k_tiles=None):
         return k_divisible_by_group_size and k_divisible_by_16_times_inner_k_tiles
     return k_divisible_by_group_size
 
-def linear_forward_8davarw(
+def linear_forward_8davarw( ## not for QAT, only for convert()
     x,
     weight_int8,
     bias,
@@ -262,12 +266,23 @@ def _get_8davarw_activation_config(qparams_precision: torch.dtype) -> FakeQuanti
 def _get_8davarw_weight_config(
     group_size: int,
     qparams_precision: torch.dtype,
-    bits: int
+    bits: int,
+    quant_value: str
 ) -> FakeQuantizeConfig:
     """
     Return the weight `FakeQuantizeConfig` for `Int8DynActInt4WeightQATQuantizer`.
     """
-    if bits == 2:
+    if bits == 4 and quant_value.upper() == "MXFP4":
+        return FakeQuantizeConfig(
+            dtype=TorchAODTypeFloat.FLOAT4_E2M1,
+            group_size=group_size,
+            is_symmetric=True,
+            is_dynamic=True,
+            scale_precision=qparams_precision,
+            zero_point_precision=qparams_precision,
+        )
+            
+    elif bits == 2:
         return FakeQuantizeConfig(
             dtype=TorchAODType.INT2,
             group_size=group_size,
@@ -481,7 +496,8 @@ def _replace_linear_8davarw(
             groupsize=group_size,
             precision=precision,
             scales_precision=scales_precision,
-            bits=bits ### replace with the mapping
+            bits=bits, ### replace with the mapping
+            quant_value=quant_value
         )
         # In distributed training, the model may be instantiated
         # on the meta device, in which case there is no need to
@@ -644,8 +660,9 @@ class Int8DynActIntVarWeightQATQuantizer(_LegacyQATQuantizer):
 
 
 
+
 ###### int 6 weights
-class Int8DynActIntVarWeightQATLinear(FakeQuantizedLinear):
+class Int8DynActIntVarWeightQATLinear(FakeQuantizedLinearWrapper):
     """
     This module implements a linear layer with int8 dynamic per token fake
     quantized activations with int4 fake quantized grouped per channel weights.
@@ -669,12 +686,13 @@ class Int8DynActIntVarWeightQATLinear(FakeQuantizedLinear):
         groupsize: int = 256,
         precision: torch.dtype = torch.float32,
         scales_precision: torch.dtype = torch.float32,
-        bits: int = 4
+        bits: int = 4,
+        quant_value: str = "Q8_0"
     ) -> None:
         # Use torch.float32 to match torchao.quantization.quant_api._int8_asymm_per_token_quant,
         # which is used in PTQ routines
         activation_config = _get_8davarw_activation_config(torch.float32)
-        weight_config = _get_8davarw_weight_config(groupsize, scales_precision, bits=bits)
+        weight_config = _get_8davarw_weight_config(groupsize, scales_precision, bits=bits, quant_value=quant_value)
         super().__init__(
             in_features,
             out_features,
