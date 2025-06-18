@@ -13,6 +13,8 @@
 #
 # This config is for fine-tuning on 2+ GPUs.
 
+## tune run quantize --config recipes/configs/qwen2_5/1.5B_qat_full.yaml
+
 output_dir: /shareddata/dheyo/shivanvitha/torchtune/models/torchtune/qwen2_5_1_5B/qat_full # /shareddata/dheyo/shivanvitha/torchtune/models may be deleted by your system. Change it to your preference.
 
 # Model arguments

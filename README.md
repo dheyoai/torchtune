@@ -1,7 +1,12 @@
 # Torchtune setup for DheyoAI
 
+
 ```
 git clone git@github.com:dheyoai/torchtune.git
+```
+
+```
+cd torchtune
 ```
 
 ```

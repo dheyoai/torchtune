@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Optional, Union
 import pdb
 import torch
 import torch.nn.functional as F
@@ -20,10 +20,13 @@ from torchao.quantization.quant_primitives import (
 from torchtune.utils.dheyo_quant_primitives import TorchAODTypeFloat
 
 from torchao.quantization.unified import TwoStepQuantizer
+from torchtune.training.dheyo_utils import get_group_qparams_symmetric_float, per_token_dynamic_quant_float
 from torchao.quantization.utils import get_group_qparams_symmetric
+
 from torchao.utils import TORCH_VERSION_AT_LEAST_2_6
 
 from torchao.quantization.qat.api import FakeQuantizeConfig
+from torchtune.training.dheyo_qat_api import FakeQuantizeConfigWrapper
 from torchao.quantization.qat.fake_quantizer import FakeQuantizer
 from torchao.quantization.qat.utils import (
     _get_qmin_qmax,
@@ -37,7 +40,7 @@ from torchao.quantization.quant_primitives import (
 
 from torchao.quantization.utils import (
     _MultiInput,
-    get_group_qparams_symmetric,
+    # get_group_qparams_symmetric,
     get_groupwise_affine_qparams,
     group_quantize_tensor_symmetric,
     groupwise_affine_dequantize_tensor_from_qparams,
@@ -82,6 +85,7 @@ bit_map = {
 }
 
 
+
 def _check_linear_int4_k(k, group_size=1, inner_k_tiles=None):
     """
     Check if the dimensions are compatible with int4 quantization.
@@ -109,15 +113,22 @@ def linear_forward_8davarw( ## not for QAT, only for convert()
     out_features,
     groupsize,
     output_precision,
-    bits
+    bits,
+    quant_value
 ):
     # uses fp32 to match torchao.quantization.quant_api._int8_asymm_per_token_quant
     # and activation_scale_dtype in QAT configs
     # TODO: in future add ability to specify activation_scale_dtype to PTQ configs
     # and enable similar change here
-    x = per_token_dynamic_quant(
-        x, scale_dtype=torch.float32, zero_point_dtype=torch.float32
-    )
+    if "MXFP4" in quant_value.upper():
+        import pdb; pdb.set_trace()
+        x = per_token_dynamic_quant_float( ## what to do here?
+            x, scale_dtype=torch.float32, zero_point_dtype=torch.float32
+        )
+    else:
+        x = per_token_dynamic_quant( ## what to do here?
+            x, scale_dtype=torch.float32, zero_point_dtype=torch.float32
+        )
 
     # TODO: verify and remove following reshape code
     # origin_x_size = x.size()
@@ -128,6 +139,10 @@ def linear_forward_8davarw( ## not for QAT, only for convert()
     n_bit = bits
     quant_min = -(2 ** (n_bit - 1))
     quant_max = 2 ** (n_bit - 1) - 1
+    import pdb; pdb.set_trace()
+    if "MXFP4" in quant_value.upper():
+        quant_min, quant_max = -6.0, 6.0
+
     block_size = (1, groupsize)
 
     w_dq = dequantize_affine(  ### check this once
@@ -135,7 +150,7 @@ def linear_forward_8davarw( ## not for QAT, only for convert()
         block_size,
         scales,
         zeros,
-        torch.int8,
+        torch.bfloat16 if "MXFP4" in quant_value.upper() else torch.int8,
         quant_min,
         quant_max,
         output_dtype=output_precision,
@@ -181,7 +196,8 @@ class Int8DynActIntVarWeightLinear(torch.nn.Module):
         groupsize: int = 256,
         precision: torch.dtype = torch.float32,
         scales_precision: torch.dtype = torch.float32,
-        bits: int = 4
+        bits: int = 4,
+        quant_value: str = "Q8_0"
     ) -> None:
         super().__init__()
         # always pad if needed since it becomes a noop at runtime if not needed
@@ -193,6 +209,7 @@ class Int8DynActIntVarWeightLinear(torch.nn.Module):
         #    in_features, groupsize
         # )
         self.bits = bits
+        self.quant_value = quant_value
         self.in_features = in_features
         self.out_features = out_features
         # TODO: align groupsize naming
@@ -234,6 +251,7 @@ class Int8DynActIntVarWeightLinear(torch.nn.Module):
         input = input.to(self.precision)
         # padding is removed for perf
         # input = F.pad(input, pad=(0, self.in_features - self.origin_in_features))
+        import pdb; pdb.set_trace()
         return linear_forward_8davarw(
             input,
             self.weight,
@@ -243,7 +261,8 @@ class Int8DynActIntVarWeightLinear(torch.nn.Module):
             self.out_features,
             self.groupsize,
             self.precision,
-            self.bits
+            self.bits,
+            self.quant_value
         )
 
 
@@ -268,12 +287,12 @@ def _get_8davarw_weight_config(
     qparams_precision: torch.dtype,
     bits: int,
     quant_value: str
-) -> FakeQuantizeConfig:
+) -> Union[FakeQuantizeConfig, FakeQuantizeConfigWrapper]:
     """
     Return the weight `FakeQuantizeConfig` for `Int8DynActInt4WeightQATQuantizer`.
     """
     if bits == 4 and quant_value.upper() == "MXFP4":
-        return FakeQuantizeConfig(
+        return FakeQuantizeConfigWrapper(
             dtype=TorchAODTypeFloat.FLOAT4_E2M1,
             group_size=group_size,
             is_symmetric=True,
@@ -603,6 +622,7 @@ class Int8DynActIntVarWeightQATQuantizer(_LegacyQATQuantizer):
                 # bits = 4
 
                 config = child.weight_fake_quantizer.config
+                import pdb; pdb.set_trace()
                 quantized_linear = Int8DynActIntVarWeightLinear(
                     child.in_features,
                     child.out_features,
@@ -610,31 +630,41 @@ class Int8DynActIntVarWeightQATQuantizer(_LegacyQATQuantizer):
                     groupsize=group_size,
                     precision=child.weight.dtype,
                     scales_precision=config.scale_precision,
-                    bits=bits ## set it to bits
+                    bits=bits, ## set it to bits
+                    quant_value=quant_value
                 )
                 setattr(module, name, quantized_linear)
 
                 # Load weights and qparams into quantized linear
                 n_bit = bits
                 (qmin, qmax) = _get_qmin_qmax(n_bit)
-                (s, zp) = get_group_qparams_symmetric(
-                    child.weight,
-                    n_bit,
-                    config.group_size,
-                    precision=config.scale_precision,
-                )
+                if "MXFP4" in quant_value.upper():
+                    (qmin, qmax) = (-6.0, 6.0)
+                    (s, zp) = get_group_qparams_symmetric_float(
+                        child.weight,
+                        n_bit,
+                        config.group_size,
+                        precision=config.scale_precision,
+                    )
+                else:
+                    (s, zp) = get_group_qparams_symmetric(
+                        child.weight,
+                        n_bit,
+                        config.group_size,
+                        precision=config.scale_precision,
+                    )
                 zp = zp.to(config.zero_point_precision)
                 from torchao._executorch_ops import (
                     _quantized_decomposed_quantize_per_channel_group_wrapper,
                 )
 
-                q_weight = _quantized_decomposed_quantize_per_channel_group_wrapper(
+                q_weight = _quantized_decomposed_quantize_per_channel_group_wrapper( ### this is creating issues?
                     child.weight,
                     s,
                     zp,
                     qmin,
                     qmax,
-                    torch.int8,
+                    torch.bfloat16 if "MXFP4" in quant_value.upper() else torch.int8,
                     config.group_size,
                 )
                 quantized_linear.weight = q_weight

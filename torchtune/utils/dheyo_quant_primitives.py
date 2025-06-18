@@ -1,6 +1,6 @@
 from enum import Enum, auto
 import torch
-from typing import Dict, Union, Tuple, Optional
+from typing import Dict, Union, Tuple, Optional, List
 from torchao.quantization.quant_primitives import MappingType, ZeroPointDomain
 
 from torchao.utils import (
@@ -25,12 +25,23 @@ class TorchAODTypeFloat(Enum):
     FLOAT4_E2M1 = auto()
 
 
-_DTYPE_TO_QVALUE_BOUNDS: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[int, int]] = {
+_DTYPE_TO_QVALUE_BOUNDS: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float, float]] = {
     TorchAODTypeFloat.FLOAT4_E2M1: (-6.0, 6.0), ## TODO: use the EM formula and expand this later
+    torch.bfloat16: (-3.40e38, 3.40e38)
+
 
 }
 _DTYPE_TO_BIT_WIDTH: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[int, int]] = {
     TorchAODTypeFloat.FLOAT4_E2M1: 4,
+}
+
+_DTYPE_TO_EMAX: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float, float]] = {
+    TorchAODTypeFloat.FLOAT4_E2M1: 2**(2 - 1),
+}
+
+_SUB_BYTE_UINT_BOUNDS: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float, float]] = {}
+_SUB_BYTE_INT_BOUNDS: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float, float]] = {
+    TorchAODTypeFloat.FLOAT4_E2M1: (-6.0, 6.0) ## TODO: use the EM formula and expand this later
 }
 
 # FP8_TYPES = {
@@ -74,7 +85,7 @@ def _get_and_check_qmin_qmax(dtype, quant_min, quant_max):
 
 
 @register_custom_op
-def _choose_qparams_affine(
+def _choose_qparams_affine_float(
     input: Optional[torch.Tensor],
     mapping_type: str,
     block_size: List[int],
@@ -150,8 +161,11 @@ def _choose_qparams_affine(
     ):
         # scales
         if mapping_type == MappingType.SYMMETRIC.name: ### only handle this part for now
+            # import pdb; pdb.set_trace()
             max_val_pos = torch.max(-min_val_neg, max_val_pos)
-            scale = max_val_pos / (float(quant_max - quant_min) / 2)
+            # scale = max_val_pos / (float(quant_max - quant_min) / 2)
+            scale_power = torch.floor(torch.log2(max_val_pos)) - _DTYPE_TO_EMAX[TorchAODTypeFloat.FLOAT4_E2M1]
+            scale = 2 ** scale_power
         else:
             assert mapping_type == MappingType.SYMMETRIC_NO_CLIPPING_ERR.name
             # calculate smin and smax individually and choose the larger one. For example, if quant_min = -8 and
@@ -209,7 +223,7 @@ def _choose_qparams_affine(
 
 
 @torch.no_grad()
-def choose_qparams_affine(
+def choose_qparams_affine_float(
     input: torch.Tensor,
     mapping_type: MappingType,
     block_size: Tuple[int, ...],
@@ -257,7 +271,7 @@ def choose_qparams_affine(
     if zero_point_domain is None:
         raise ValueError("Please use ZeroPointDomain.NONE instead of None")
 
-    return _choose_qparams_affine( ## need to customize this!
+    return _choose_qparams_affine_float( ## need to customize this!
         input,
         mapping_type.name,
         block_size,

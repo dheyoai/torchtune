@@ -10,8 +10,8 @@ from torchao.quantization.utils import (
     get_group_qparams_symmetric,
     get_groupwise_affine_qparams,
 )
-
-from torchao.quantization.qat.fake_quantizer.utils import (
+from torchtune.training.dheyo_utils import get_group_qparams_symmetric_float
+from torchao.quantization.qat.utils import (
     _fake_quantize_per_channel_group,
     _fake_quantize_per_token,
 )
@@ -36,6 +36,8 @@ class FakeQuantizerWrapper(FakeQuantizer):
         We express per channel using per group where the group size is the size
         of the last dimension of the tensor.
         """
+
+        # import pdb; pdb.set_trace()
         granularity = self.config.granularity
         scale_precision = self.config.scale_precision
         zero_point_precision = self.config.zero_point_precision
@@ -54,9 +56,10 @@ class FakeQuantizerWrapper(FakeQuantizer):
         # get scales and zero points
         # TODO: refactor this to use `choose_qparams_affine`
         if self._should_compute_qparams():
+            # import pdb; pdb.set_trace()
             bit_width = _DTYPE_TO_BIT_WIDTH[self.config.dtype]
             if is_symmetric:
-                (self.scale, self.zero_point) = get_group_qparams_symmetric(
+                (self.scale, self.zero_point) = get_group_qparams_symmetric_float(
                     x,
                     bit_width,
                     group_size,

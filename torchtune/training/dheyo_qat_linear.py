@@ -62,6 +62,7 @@ class FakeQuantizedLinearWrapper(FakeQuantizedLinear):
                     % (in_features, group_size)
                 )
             
+            # import pdb; pdb.set_trace()
             if isinstance(weight_config.dtype, TorchAODTypeFloat):
                 self.weight_fake_quantizer = FakeQuantizerWrapper(weight_config)
             else:

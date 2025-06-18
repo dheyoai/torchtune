@@ -3,14 +3,14 @@
 #
 # This config assumes that you've run the following command before launching
 # this run:
-#   tune download Qwen/Qwen2.5-1.5B-Instruct --output-dir /tmp/Qwen2.5-1.5B-Instruct
+#   tune download Qwen/Qwen2.5-1.5B-Instruct --output-dir /shareddata/dheyo/shivanvitha/torchtune/models/Qwen2.5-1.5B-Instruct
 #
 # The default config uses an optimizer from bitsandbytes. If you do not have it installed,
 # you can install it with
 #   pip install bitsandbytes
 #
 # To launch on a single device, run the following command from root:
-#   tune run qat_single_device --config qwen2_5/1.5B_qat_single_device
+#   tune run qat_single_device --config recipes/configs/qwen2_5/1.5B_qat_single_device
 #
 # You can add specific overrides through the command line. For example
 # to override the checkpointer directory while launching training
@@ -19,14 +19,14 @@
 #
 # This config works only for training on single device.
 
-output_dir: /tmp/torchtune/qwen2_5_1_5B/qat_single_device # /tmp may be deleted by your system. Change it to your preference.
+output_dir: /shareddata/dheyo/shivanvitha/torchtune/models/torchtune/qwen2_5_1_5B/qat_single_device # /shareddata/dheyo/shivanvitha/torchtune/models may be deleted by your system. Change it to your preference.
 
 # Tokenizer
 tokenizer:
   _component_: torchtune.models.qwen2_5.qwen2_5_tokenizer
-  path: /tmp/Qwen2.5-1.5B-Instruct/vocab.json
-  merges_file: /tmp/Qwen2.5-1.5B-Instruct/merges.txt
-  max_seq_len: null
+  path: /shareddata/dheyo/shivanvitha/torchtune/models/Qwen2.5-1.5B-Instruct/vocab.json
+  merges_file: /shareddata/dheyo/shivanvitha/torchtune/models/Qwen2.5-1.5B-Instruct/merges.txt
+  max_seq_len: 512
 
 # Dataset
 dataset:
@@ -41,7 +41,7 @@ model:
 
 checkpointer:
   _component_: torchtune.training.FullModelHFCheckpointer
-  checkpoint_dir: /tmp/Qwen2.5-1.5B-Instruct
+  checkpoint_dir: /shareddata/dheyo/shivanvitha/torchtune/models/Qwen2.5-1.5B-Instruct
   checkpoint_files: [model.safetensors]
   recipe_checkpoint: null
   output_dir: ${output_dir}
@@ -64,14 +64,14 @@ compile: False  # torch.compile the model + loss, True increases speed + decreas
 
 # QAT arguments
 quantizer:
-  _component_: torchtune.training.quantization.Int8DynActInt4WeightQATQuantizer
+  _component_: torchtune.training.quantization.Int8DynActIntVarWeightQATQuantizer
   groupsize: 256
 
 # Training environment
 device: cuda
 
 # Memory management
-enable_activation_checkpointing: True  # True reduces memory
+enable_activation_checkpointing: False  # True reduces memory
 enable_activation_offloading: False  # True reduces memory
 
 # Reduced precision
