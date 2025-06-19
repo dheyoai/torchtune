@@ -58,6 +58,7 @@ class FakeQuantizerWrapper(FakeQuantizer):
         if self._should_compute_qparams():
             # import pdb; pdb.set_trace()
             bit_width = _DTYPE_TO_BIT_WIDTH[self.config.dtype]
+            print(f"BIT WIDTH: {bit_width}")
             if is_symmetric:
                 (self.scale, self.zero_point) = get_group_qparams_symmetric_float(
                     x,

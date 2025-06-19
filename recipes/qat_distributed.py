@@ -878,6 +878,13 @@ class QATRecipeDistributed(FTRecipeInterface):
         with self.activations_handling_ctx:
             outputs = self._model(**batch)
 
+        # if self._is_rank_zero:
+        #     for name, child in self._model.named_modules():
+        #         print(name)
+        #         # if "layers.0.attn.k_proj.weight_fake_quantizer" in name:
+        #         if isinstance(child, nn.Linear):
+        #             import pdb; pdb.set_trace()
+
         # post process for third party loss functions
         if not isinstance(self._loss_fn, SFTLoss):
             labels = labels.reshape(-1)

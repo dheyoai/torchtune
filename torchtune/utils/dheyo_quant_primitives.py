@@ -22,7 +22,7 @@ class TorchAODTypeFloat(Enum):
     """
     Placeholder for float dtypes that do not exist in PyTorch core yet.
     """
-    FLOAT4_E2M1 = auto()
+    FLOAT4_E2M1 = 4
 
 
 _DTYPE_TO_QVALUE_BOUNDS: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float, float]] = {
@@ -96,7 +96,7 @@ def _choose_qparams_affine_float(
     scale_dtype: Optional[torch.dtype] = None,
     zero_point_dtype: Optional[torch.dtype] = None,
     preserve_zero: bool = True,
-    zero_point_domain: Optional[str] = "INT",
+    zero_point_domain: Optional[str] = "FLOAT",
     min_val: Optional[torch.Tensor] = None,
     max_val: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:

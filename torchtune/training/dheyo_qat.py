@@ -507,6 +507,8 @@ def _replace_linear_8davarw(
         except:
             bits = 8 ## default
 
+        # if "MX" in quant_value.upper(): 
+            # torch.save(child.weight, "/shareddata/dheyo/shivanvitha/torchtune/dummy_og.pt")
         new_linear = linear_class(
             child.in_features,
             child.out_features,
@@ -518,12 +520,18 @@ def _replace_linear_8davarw(
             bits=bits, ### replace with the mapping
             quant_value=quant_value
         )
+
         # In distributed training, the model may be instantiated
         # on the meta device, in which case there is no need to
         # copy the weights, and doing so will result in an error
         if copy_weights and child.weight.device != torch.device("meta"):
             new_linear.weight = child.weight
             new_linear.bias = child.bias
+
+        # if "MX" in quant_value.upper(): 
+        #     torch.save(new_linear.weight, "/shareddata/dheyo/shivanvitha/torchtune/dummy_after.pt")
+        
+            # import pdb; pdb.set_trace()
         return new_linear
 
 
@@ -568,10 +576,11 @@ class Int8DynActIntVarWeightQATQuantizer(_LegacyQATQuantizer):
             Int8DynActIntVarWeightQATLinear,
             copy_weights=True,
         )
-        # import pdb; pdb.set_trace()
         f = open("/shareddata/dheyo/shivanvitha/torchtune/dummy1.md", 'w')
         f.write(str(model))
         f.close()
+        # import pdb; pdb.set_trace()
+
         return model
 
 
