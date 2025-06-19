@@ -1,7 +1,18 @@
 from enum import Enum, auto
 import torch
 from typing import Dict, Union, Tuple, Optional, List
-from torchao.quantization.quant_primitives import MappingType, ZeroPointDomain
+from torchao.quantization.quant_primitives import (
+    MappingType, 
+    ZeroPointDomain, 
+    _quantize_affine_no_dtype_cast, 
+    _dequantize_affine_no_dtype_check,
+    _quantize_affine_no_dtype_cast,
+    _dequantize_affine_no_dtype_check,
+    _quantize_affine_tinygemm_no_dtype_cast,
+    _dequantize_affine_tinygemm_no_dtype_check,
+    _quantize_affine_no_zero_point_no_dtype_cast,
+    _dequantize_affine_no_zero_point_no_dtype_check
+    )
 
 from torchao.utils import (
     TORCH_VERSION_AT_LEAST_2_3,
@@ -284,3 +295,229 @@ def choose_qparams_affine_float(
         preserve_zero,
         zero_point_domain.name,
     )
+
+
+def is_even(r):
+    even_values = [-4.0, -2.0, -1.0, 0, 1.0, 2.0, 4.0]
+    return r in even_values
+
+
+def float_to_e2m1(y):
+    if y == 0:
+        return 0.0
+    R = [-6.0, -4.0, -3.0, -2.0, -1.5, -1.0, -0.5, 0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0]
+    min_dist = min(abs(r - y) for r in R)
+    candidates = [r for r in R if abs(r - y) == min_dist]
+    even_candidates = [r for r in candidates if is_even(r)]
+    chosen_r = even_candidates[0] if even_candidates else candidates[0]
+    return chosen_r
+
+
+
+def vectorized_float_to_e2m1(tensor):
+    # Define the sets as PyTorch tensors
+    R = torch.tensor([-6.0, -4.0, -3.0, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0], device=tensor.device)
+    even_values = torch.tensor([-4.0, -2.0, -1.0, 0.0, 1.0, 2.0, 4.0], device=tensor.device)
+    
+    # Initialize result tensor
+    result = torch.zeros_like(tensor)
+    
+    # Handle non-zero elements
+    mask_nonzero = tensor != 0
+    if mask_nonzero.any():
+        # Compute absolute differences: shape (256, 1536, len(R))
+        tensor_nonzero = tensor[mask_nonzero]
+        diffs = torch.abs(tensor_nonzero[:, None] - R)
+        
+        # Find minimum distance and indices: shape (num_nonzero,)
+        min_dist, min_indices = torch.min(diffs, dim=1)
+        
+        # Create mask for candidates (where distance equals min_dist)
+        candidates_mask = diffs == min_dist[:, None]
+        
+        # Get all candidate indices per element
+        candidate_indices = candidates_mask.nonzero(as_tuple=True)[1]
+        element_indices = candidates_mask.nonzero(as_tuple=True)[0]
+        
+        # Initialize chosen indices with the first candidate
+        chosen_indices = torch.zeros_like(min_indices)
+        first_candidate = torch.zeros_like(min_indices)
+        
+        # Map element indices to their first candidate
+        for i in range(len(element_indices)):
+            if first_candidate[element_indices[i]] == 0:
+                first_candidate[element_indices[i]] = 1
+                chosen_indices[element_indices[i]] = candidate_indices[i]
+        
+        # Check for even candidates
+        even_mask = torch.isin(R, even_values)
+        even_candidates = candidates_mask & even_mask[None, :]
+        
+        # Update chosen indices if an even candidate exists
+        even_candidate_indices = even_candidates.nonzero(as_tuple=True)[1]
+        even_element_indices = even_candidates.nonzero(as_tuple=True)[0]
+        
+        for i in range(len(even_element_indices)):
+            chosen_indices[even_element_indices[i]] = even_candidate_indices[i]
+        
+        # Map chosen indices to R values
+        result[mask_nonzero] = R[chosen_indices]
+    
+    return result
+
+# Example usage
+# weight_matrix = torch.randn(256, 1536, device='cuda' if torch.cuda.is_available() else 'cpu')
+# quantized_matrix = vectorized_float_to_e2m1(weight_matrix)
+
+
+
+# def _do_fake_quantize_float_affine(
+#     input: torch.Tensor,
+#     block_size: Tuple[int, ...],
+#     scale: torch.Tensor,
+#     zero_point: Optional[torch.Tensor],
+#     quant_dtype: torch.dtype,
+#     quant_min: Optional[Union[int, float]] = None,
+#     quant_max: Optional[Union[int, float]] = None,
+#     zero_point_domain: ZeroPointDomain = ZeroPointDomain.INT,
+# ) -> Tuple[torch.Tensor, torch.Tensor]:
+#     """
+#     Helper function for `fake_quantize_affine` that returns both the
+#     intermediate quantized values and the final dequantized values.
+#     """
+#     input_dtype = input.dtype
+#     quant_min, quant_max = _get_and_check_qmin_qmax(quant_dtype, quant_min, quant_max)
+#     q = _quantize_affine_no_dtype_cast(
+#         input,
+#         block_size,
+#         scale,
+#         zero_point,
+#         quant_min,
+#         quant_max,
+#         quant_dtype,
+#         zero_point_domain.name,
+#     )
+
+#     print(f"WEIGHT MATRIX SHAPE: {input.shape}")
+
+#     ### TODO: after quantizing map the values to mxfp4_e2m1 ranges (close match) here
+#     dq = _dequantize_affine_no_dtype_check(
+#         q,
+#         block_size,
+#         scale,
+#         zero_point,
+#         quant_min,
+#         quant_max,
+#         zero_point_domain.name,
+#         output_dtype=input_dtype,
+#     )
+#     return (q, dq)
+
+
+
+def _do_fake_quantize_float_affine(
+    input: torch.Tensor,
+    block_size: Tuple[int, ...],
+    scale: torch.Tensor,
+    zero_point: Optional[torch.Tensor],
+    quant_dtype: torch.dtype,
+    quant_min: Optional[Union[int, float]] = None,
+    quant_max: Optional[Union[int, float]] = None,
+    zero_point_domain: ZeroPointDomain = ZeroPointDomain.INT,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Helper function for `fake_quantize_affine` that returns both the
+    intermediate quantized values and the final dequantized values.
+    """
+    input_dtype = input.dtype
+    quant_min, quant_max = _get_and_check_qmin_qmax(quant_dtype, quant_min, quant_max)
+    if zero_point_domain == ZeroPointDomain.INT:
+        _quantize_affine = _quantize_affine_no_dtype_cast
+        _dequantize_affine = _dequantize_affine_no_dtype_check
+    elif zero_point_domain == ZeroPointDomain.FLOAT:
+        _quantize_affine = _quantize_affine_tinygemm_no_dtype_cast
+        _dequantize_affine = _dequantize_affine_tinygemm_no_dtype_check
+    elif ZeroPointDomain == ZeroPointDomain.NONE:
+        _quantize_affine = _quantize_affine_no_zero_point_no_dtype_cast
+        _dequantize_affine = _dequantize_affine_no_zero_point_no_dtype_check
+    else:
+        raise ValueError(f"Unrecognized zero point domain: {zero_point_domain}")
+    
+
+    print(f"========================== OG INPUT ==========================\n{input}")
+    torch.save(input, "/shareddata/dheyo/shivanvitha/torchtune/dummy_og1.pt")
+    q = _quantize_affine(
+        input,
+        block_size,
+        scale,
+        zero_point,
+        quant_min,
+        quant_max,
+    )
+
+    ### TODO: after quantizing map the values to mxfp4_e2m1 ranges (close match) here
+    # print(f"WEIGHT MATRIX SHAPE: {input.shape}") ## Its a 2D normal weight matrix!!!
+    mapped_q = vectorized_float_to_e2m1(q)
+    print(f"========================== Mapped Q ==========================\n{mapped_q}")
+    # print(f"{scale} and {zero_point}")
+
+    dq = _dequantize_affine(
+        mapped_q,
+        block_size,
+        scale,
+        zero_point,
+        quant_min,
+        quant_max,
+        output_dtype=input_dtype,
+    )
+    print(f"========================== DeQuant ==========================\n{dq}")
+    torch.save(dq, "/shareddata/dheyo/shivanvitha/torchtune/dummy_after1.pt")
+    import pdb; pdb.set_trace()
+    return (q, dq)
+
+
+def fake_quantize_float_affine_cachemask(
+    input: torch.Tensor,
+    block_size: Tuple[int, ...],
+    scale: torch.Tensor,
+    zero_point: Optional[torch.Tensor],
+    quant_dtype: torch.dtype,
+    quant_min: Optional[Union[int, float]] = None,
+    quant_max: Optional[Union[int, float]] = None,
+    zero_point_domain: ZeroPointDomain = ZeroPointDomain.FLOAT,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    General fake quantize op for quantization-aware training (QAT).
+    This is equivalent to calling `quantize_affine` + `dequantize_affine`
+    but without the dtype casts.
+
+    Note: Compared to :func:`~torchao.quantization.quant_primitives.fake_quantize_affine`,
+    this consumes more memory and returns an additional outlier mask for
+    intermediate quantized values.
+
+    Args:
+      Same as :func:`~torchao.quantization.quant_primitives.fake_quantize_affine`.
+
+    Returns:
+      A 2-tuple of (
+          final fake quantized values,
+          outlier mask for intermediate quantized values
+      )
+
+    """
+    if zero_point_domain is None:
+        raise ValueError("Please use ZeroPointDomain.NONE instead of None")
+    elif zero_point_domain is None and zero_point is not None:
+        raise ValueError("zero_point should be None when zero_point_domain is NONE")
+    (q, dq) = _do_fake_quantize_float_affine(
+        input,
+        block_size,
+        scale,
+        zero_point,
+        quant_dtype,
+        quant_min,
+        quant_max,
+        zero_point_domain,
+    )
+    mask = torch.logical_and((q >= quant_min), (q <= quant_max))
+    return (dq, mask)

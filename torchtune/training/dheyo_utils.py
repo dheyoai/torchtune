@@ -1,8 +1,10 @@
 import torch
-from torchao.quantization.quant_primitives import MappingType, dequantize_affine, quantize_affine
+from torchao.quantization.quant_primitives import MappingType, dequantize_affine, quantize_affine, ZeroPointDomain
 from torchao.quantization.utils import _get_per_token_block_size
-    
-from torchtune.utils.dheyo_quant_primitives import choose_qparams_affine_float
+
+from typing import List
+from torchtune.utils.dheyo_quant_primitives import choose_qparams_affine_float, fake_quantize_float_affine_cachemask
+
 
 def per_token_dynamic_quant_float(
     input: torch.Tensor,
@@ -84,3 +86,78 @@ def get_group_qparams_symmetric_float(
         zero_point_dtype=precision,
     )
     return scale.reshape(w.shape[0], -1), zero_point.reshape(w.shape[0], -1)
+
+
+
+class _GenericFakeQuantizeWrapper(torch.autograd.Function):
+    """
+    Implementation of generic fake quantize with backward STE.
+
+    With the appropriate input tensor shape, this can be used to express
+    grouped per channel fake quantize or per token fake quantize.
+    """
+
+    @staticmethod
+    def forward(
+        ctx: torch.autograd.function.FunctionCtx,
+        input: torch.Tensor,
+        block_size: List[int],
+        scales: torch.Tensor,
+        zero_points: torch.Tensor,
+        quant_min: float,
+        quant_max: float,
+        zero_point_domain: ZeroPointDomain = ZeroPointDomain.FLOAT,
+    ) -> torch.Tensor:
+        # avoid circular dependencies
+        from torchao.quantization.qat.affine_fake_quantized_tensor import (
+            AffineFakeQuantizedTensor,
+        )
+
+        if isinstance(input, AffineFakeQuantizedTensor):
+            _input = input.original_tensor
+        else:
+            _input = input
+
+        (fq, mask) = fake_quantize_float_affine_cachemask( ## check this
+            _input,
+            block_size,
+            scales,
+            zero_points,
+            torch.bfloat16,
+            quant_min,
+            quant_max,
+            zero_point_domain,
+        )
+
+        ctx.save_for_backward(mask)
+        return fq
+
+    @staticmethod
+    def backward(ctx, gy):
+        (mask,) = ctx.saved_tensors
+        return gy * mask, None, None, None, None, None, None
+
+
+
+def _fake_quantize_per_channel_group(
+    input: torch.Tensor,
+    scales: torch.Tensor,
+    zero_points: torch.Tensor,
+    quant_min: int,
+    quant_max: int,
+    group_size: int,
+    zero_point_domain: ZeroPointDomain = ZeroPointDomain.FLOAT,
+) -> torch.Tensor:
+    assert group_size > 1
+    assert input.shape[-1] % group_size == 0
+    assert input.dim() == 2
+    block_size = (1, group_size)
+    return _GenericFakeQuantizeWrapper.apply(
+        input,
+        block_size,
+        scales,
+        zero_points,
+        quant_min,
+        quant_max,
+        zero_point_domain,
+    )
