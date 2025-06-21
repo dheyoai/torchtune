@@ -136,6 +136,7 @@ class QATRecipeDistributed(FTRecipeInterface):
 
     def __init__(self, cfg: DictConfig) -> None:
         device_type = cfg.device
+        self.per_layer_quant_config_json = cfg.get("per_layer_quant_config_json", None)
         self._device = utils.get_device(device=device_type)
         self._dtype = training.get_dtype(cfg.dtype, device=self._device)
 
@@ -676,7 +677,9 @@ class QATRecipeDistributed(FTRecipeInterface):
                 "Quantizer mode '%s' is not supported for finetuning" % quantizer_mode
             )
         self._quantizer_mode = quantizer_mode
-        model = quantizer.prepare(model)
+
+        model = quantizer.prepare(model, self.per_layer_quant_config_json)
+        
 
         # Apply Fully Sharded Data Parallelism to the model
         if self.parallel_dims.dp_shard_enabled:

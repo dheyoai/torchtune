@@ -4,9 +4,7 @@ from typing import Dict, Union, Tuple, Optional, List
 from torchao.quantization.quant_primitives import (
     MappingType, 
     ZeroPointDomain, 
-    _quantize_affine_no_dtype_cast, 
-    _dequantize_affine_no_dtype_check,
-    _quantize_affine_no_dtype_cast,
+    # _quantize_affine_no_dtype_cast,
     _dequantize_affine_no_dtype_check,
     _quantize_affine_tinygemm_no_dtype_cast,
     _dequantize_affine_tinygemm_no_dtype_check,
@@ -28,31 +26,87 @@ quant_lib = torch.library.Library("torchao", "FRAGMENT")
 
 register_custom_op = _register_custom_op(quant_lib)
 
+def calculate_mx_range(exponent_bits, mantissa_bits):
+    """
+    Calculate the range for an MX format given exponent and mantissa bits.
+    
+    Args:
+        exponent_bits (int): Number of exponent bits (e).
+        mantissa_bits (int): Number of mantissa bits (m).
+    
+    Returns:
+        tuple: (min_value, max_value) representing the range (-max, max).
+    """
+    bias = 2 ** (exponent_bits - 1) - 1
+    max_exponent = (2 ** exponent_bits) - 1
+    effective_exponent = max_exponent - bias
+    max_mantissa = (2 ** mantissa_bits - 1) / (2 ** mantissa_bits)
+    max_value = (1 + max_mantissa) * (2 ** effective_exponent)
+    return -max_value, max_value
+
 
 class TorchAODTypeFloat(Enum):
     """
     Placeholder for float dtypes that do not exist in PyTorch core yet.
     """
     FLOAT4_E2M1 = 4
+    FLOAT6_E2M3 = 6
+    FLOAT6_E3M2 = 6
+
 
 
 _DTYPE_TO_QVALUE_BOUNDS: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float, float]] = {
-    TorchAODTypeFloat.FLOAT4_E2M1: (-6.0, 6.0), ## TODO: use the EM formula and expand this later
+    TorchAODTypeFloat.FLOAT4_E2M1: calculate_mx_range(2, 1), ## TODO: use the EM formula and expand this later
+    TorchAODTypeFloat.FLOAT6_E2M3: calculate_mx_range(2, 3), ## TODO: use the EM formula and expand this later
+    TorchAODTypeFloat.FLOAT6_E3M2: calculate_mx_range(3, 2), ## TODO: use the EM formula and expand this later
+
     torch.bfloat16: (-3.40e38, 3.40e38)
 
 
 }
 _DTYPE_TO_BIT_WIDTH: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[int, int]] = {
     TorchAODTypeFloat.FLOAT4_E2M1: 4,
+    TorchAODTypeFloat.FLOAT6_E2M3: 6,
+    TorchAODTypeFloat.FLOAT6_E3M2: 6,
+
 }
 
+
+_DTYPE_TO_EXPONENT_BITS: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float, float]] = {
+    TorchAODTypeFloat.FLOAT4_E2M1: 2,
+    TorchAODTypeFloat.FLOAT6_E2M3: 2, 
+    TorchAODTypeFloat.FLOAT6_E3M2: 3, 
+
+}
+
+_DTYPE_TO_BIAS: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float, float]] = {
+    TorchAODTypeFloat.FLOAT4_E2M1: 2**(_DTYPE_TO_EXPONENT_BITS[TorchAODTypeFloat.FLOAT4_E2M1] - 1) - 1,
+    TorchAODTypeFloat.FLOAT6_E2M3: 2**(_DTYPE_TO_EXPONENT_BITS[TorchAODTypeFloat.FLOAT6_E2M3] - 1) - 1, ## verify
+    TorchAODTypeFloat.FLOAT6_E3M2: 2**(_DTYPE_TO_EXPONENT_BITS[TorchAODTypeFloat.FLOAT6_E3M2] - 1) - 1, ## verify
+
+}
+
+
 _DTYPE_TO_EMAX: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float, float]] = {
-    TorchAODTypeFloat.FLOAT4_E2M1: 2**(2 - 1),
+    TorchAODTypeFloat.FLOAT4_E2M1: 2**_DTYPE_TO_EXPONENT_BITS[TorchAODTypeFloat.FLOAT4_E2M1] - 1 - _DTYPE_TO_BIAS[TorchAODTypeFloat.FLOAT4_E2M1],
+    TorchAODTypeFloat.FLOAT6_E2M3: 2**_DTYPE_TO_EXPONENT_BITS[TorchAODTypeFloat.FLOAT6_E2M3] - 1 - _DTYPE_TO_BIAS[TorchAODTypeFloat.FLOAT6_E2M3], ## verify
+    TorchAODTypeFloat.FLOAT6_E3M2: 2**_DTYPE_TO_EXPONENT_BITS[TorchAODTypeFloat.FLOAT6_E3M2] - 1 - _DTYPE_TO_BIAS[TorchAODTypeFloat.FLOAT6_E3M2], ## verify
+
+}
+
+_DYPE_TO_MANTISSA_BITS: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float, float]] = {
+    TorchAODTypeFloat.FLOAT4_E2M1: 1,
+    TorchAODTypeFloat.FLOAT6_E2M3: 3, ## verify
+    TorchAODTypeFloat.FLOAT6_E3M2: 2 ## verify
+
 }
 
 _SUB_BYTE_UINT_BOUNDS: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float, float]] = {}
 _SUB_BYTE_INT_BOUNDS: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float, float]] = {
-    TorchAODTypeFloat.FLOAT4_E2M1: (-6.0, 6.0) ## TODO: use the EM formula and expand this later
+    TorchAODTypeFloat.FLOAT4_E2M1: calculate_mx_range(2, 1), ## TODO: use the EM formula and expand this later
+    TorchAODTypeFloat.FLOAT6_E2M3: calculate_mx_range(2, 3), ## TODO: use the EM formula and expand this later
+    TorchAODTypeFloat.FLOAT6_E3M2: calculate_mx_range(3, 2), ## TODO: use the EM formula and expand this later
+
 }
 
 # FP8_TYPES = {
@@ -95,14 +149,14 @@ def _get_and_check_qmin_qmax(dtype, quant_min, quant_max):
     return quant_min, quant_max
 
 
-@register_custom_op
+# @register_custom_op
 def _choose_qparams_affine_float(
     input: Optional[torch.Tensor],
     mapping_type: str,
     block_size: List[int],
     target_dtype: torch.dtype,
     quant_min: Optional[Union[int, float, bool]] = None,
-    quant_max: Optional[Union[int, float, bool]] = None,
+    quant_max: Optional[Union[int, float, bool]] = None, ## condition on quant_max for EMAX choice in scale calculation
     eps: Optional[float] = None,
     scale_dtype: Optional[torch.dtype] = None,
     zero_point_dtype: Optional[torch.dtype] = None,
@@ -110,6 +164,7 @@ def _choose_qparams_affine_float(
     zero_point_domain: Optional[str] = "FLOAT",
     min_val: Optional[torch.Tensor] = None,
     max_val: Optional[torch.Tensor] = None,
+    representation_dtype: TorchAODTypeFloat = TorchAODTypeFloat.FLOAT4_E2M1
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """op definition that has compatible signatures with custom op library
 
@@ -172,11 +227,13 @@ def _choose_qparams_affine_float(
     ):
         # scales
         if mapping_type == MappingType.SYMMETRIC.name: ### only handle this part for now
+            ## change this calculation here
             # import pdb; pdb.set_trace()
             max_val_pos = torch.max(-min_val_neg, max_val_pos)
             # scale = max_val_pos / (float(quant_max - quant_min) / 2)
-            scale_power = torch.floor(torch.log2(max_val_pos)) - _DTYPE_TO_EMAX[TorchAODTypeFloat.FLOAT4_E2M1]
-            scale = 2 ** scale_power
+            scale_power = torch.floor(torch.log2(max_val_pos)) - _DTYPE_TO_EMAX[representation_dtype]
+            scale = 2 ** torch.clamp(scale_power, -127, 128)
+            # import pdb; pdb.set_trace()
         else:
             assert mapping_type == MappingType.SYMMETRIC_NO_CLIPPING_ERR.name
             # calculate smin and smax individually and choose the larger one. For example, if quant_min = -8 and
@@ -246,6 +303,7 @@ def choose_qparams_affine_float(
     zero_point_dtype: Optional[torch.dtype] = None,
     preserve_zero: bool = True,
     zero_point_domain: ZeroPointDomain = ZeroPointDomain.INT,
+    representation_dtype: TorchAODTypeFloat = TorchAODTypeFloat.FLOAT4_E2M1
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Args:
@@ -294,76 +352,66 @@ def choose_qparams_affine_float(
         zero_point_dtype,
         preserve_zero,
         zero_point_domain.name,
+        representation_dtype=representation_dtype
     )
 
 
-def is_even(r):
-    even_values = [-4.0, -2.0, -1.0, 0, 1.0, 2.0, 4.0]
-    return r in even_values
+def is_even(x):
+    # Assuming is_even checks if the mantissa in FP4 E2M1 is even
+    # In FP4 E2M1, "even" mantissa corresponds to values like -6.0, -4.0, -2.0, -1.0, -0.5, 0, 0.5, 1.0, 2.0, 4.0, 6.0
+    even_values = torch.tensor([-6.0, -4.0, -2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 4.0, 6.0], device=x.device)
+    return torch.isin(x, even_values)
 
 
-def float_to_e2m1(y):
-    if y == 0:
-        return 0.0
-    R = [-6.0, -4.0, -3.0, -2.0, -1.5, -1.0, -0.5, 0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0]
-    min_dist = min(abs(r - y) for r in R)
-    candidates = [r for r in R if abs(r - y) == min_dist]
-    even_candidates = [r for r in candidates if is_even(r)]
-    chosen_r = even_candidates[0] if even_candidates else candidates[0]
-    return chosen_r
+# def float_to_e2m1(y):
+#     if y == 0:
+#         return 0.0
+#     R = [-6.0, -4.0, -3.0, -2.0, -1.5, -1.0, -0.5, 0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0]
+#     min_dist = min(abs(r - y) for r in R)
+#     candidates = [r for r in R if abs(r - y) == min_dist]
+#     even_candidates = [r for r in candidates if is_even(r)]
+#     chosen_r = even_candidates[0] if even_candidates else candidates[0]
+#     return chosen_r
 
 
 
-def vectorized_float_to_e2m1(tensor):
-    # Define the sets as PyTorch tensors
-    R = torch.tensor([-6.0, -4.0, -3.0, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0], device=tensor.device)
-    even_values = torch.tensor([-4.0, -2.0, -1.0, 0.0, 1.0, 2.0, 4.0], device=tensor.device)
+def float_to_e2m1(tensor):
+    # Define FP4 E2M1 values
+    R = torch.tensor([-6.0, -4.0, -3.0, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0], 
+                     device=tensor.device, dtype=tensor.dtype)
     
-    # Initialize result tensor
-    result = torch.zeros_like(tensor)
+
+    original_shape = tensor.shape
+    tensor_flat = tensor.flatten() 
     
-    # Handle non-zero elements
-    mask_nonzero = tensor != 0
-    if mask_nonzero.any():
-        # Compute absolute differences: shape (256, 1536, len(R))
-        tensor_nonzero = tensor[mask_nonzero]
-        diffs = torch.abs(tensor_nonzero[:, None] - R)
-        
-        # Find minimum distance and indices: shape (num_nonzero,)
-        min_dist, min_indices = torch.min(diffs, dim=1)
-        
-        # Create mask for candidates (where distance equals min_dist)
-        candidates_mask = diffs == min_dist[:, None]
-        
-        # Get all candidate indices per element
-        candidate_indices = candidates_mask.nonzero(as_tuple=True)[1]
-        element_indices = candidates_mask.nonzero(as_tuple=True)[0]
-        
-        # Initialize chosen indices with the first candidate
-        chosen_indices = torch.zeros_like(min_indices)
-        first_candidate = torch.zeros_like(min_indices)
-        
-        # Map element indices to their first candidate
-        for i in range(len(element_indices)):
-            if first_candidate[element_indices[i]] == 0:
-                first_candidate[element_indices[i]] = 1
-                chosen_indices[element_indices[i]] = candidate_indices[i]
-        
-        # Check for even candidates
-        even_mask = torch.isin(R, even_values)
-        even_candidates = candidates_mask & even_mask[None, :]
-        
-        # Update chosen indices if an even candidate exists
-        even_candidate_indices = even_candidates.nonzero(as_tuple=True)[1]
-        even_element_indices = even_candidates.nonzero(as_tuple=True)[0]
-        
-        for i in range(len(even_element_indices)):
-            chosen_indices[even_element_indices[i]] = even_candidate_indices[i]
-        
-        # Map chosen indices to R values
-        result[mask_nonzero] = R[chosen_indices]
+    # Broadcast: compute |tensor[i] - R[j]| for all i, j
+    # tensor_flat: (N,), R: (15,) -> dists: (N, 15)
+    dists = torch.abs(tensor_flat.unsqueeze(-1) - R)
     
-    return result
+    # Find indices of minimum distances
+    min_dist_indices = torch.argmin(dists, dim=-1)  # Shape: (N,)
+    
+    # Initialize output with closest values
+    result = R[min_dist_indices]  # Shape: (N,)
+    
+    # Handle ties: check if multiple R values have the same minimum distance
+    min_dists = dists.gather(1, min_dist_indices.unsqueeze(-1)).squeeze(-1)  # Shape: (N,)
+    tie_mask = (dists == min_dists.unsqueeze(-1)).sum(dim=-1) > 1  # Shape: (N,)
+    
+    if tie_mask.any():
+        # For elements with ties, find all candidates
+        tie_indices = torch.where(tie_mask)[0]
+        for idx in tie_indices:
+            candidates = R[dists[idx] == min_dists[idx]]
+            even_candidates = candidates[is_even(candidates)]
+            result[idx] = even_candidates[0] if even_candidates.numel() > 0 else candidates[0]
+    
+    # Reshape back to original shape
+    return result.reshape(original_shape)
+
+
+
+
 
 # Example usage
 # weight_matrix = torch.randn(256, 1536, device='cuda' if torch.cuda.is_available() else 'cpu')
@@ -413,6 +461,54 @@ def vectorized_float_to_e2m1(tensor):
 #     )
 #     return (q, dq)
 
+def _quantize_affine_no_dtype_cast(
+    input: torch.Tensor,
+    block_size: List[int],
+    scale: torch.Tensor,
+    zero_point: Optional[torch.Tensor],
+    quant_min: Union[int, float],
+    quant_max: Union[int, float],
+) -> torch.Tensor:
+    """
+    The op does the following:
+    1. figure out the dimension for reduction based on block_size, also reshape the input to align with
+       the shape after reduction
+    2. quantize the input based on the quantization parameters scale and zero_point and zero_point_domain = INT
+    3. reshape the quantized result to origianl shape
+    """
+    # TODO: validations
+    # TODO: validate scale/zero_point dimensions are compatible with block_size
+    assert input.dtype in [
+        torch.float32,
+        torch.float16,
+        torch.bfloat16,
+    ], f"Unsupported input dtype: {input.dtype}"
+    assert len(block_size) == input.dim(), (
+        f"Got input dim:{input.dim()}, block_size: {block_size}"
+    )
+    shape_for_reduction, reduction_dims = _get_reduction_params(
+        block_size, input.size()
+    )
+    original_shape = input.shape
+    input = input.view(shape_for_reduction)
+    shape_after_reduction = shape_for_reduction
+    for i in reduction_dims:
+        shape_after_reduction[i] = 1
+    scale = scale.view(shape_after_reduction)
+
+    if zero_point is not None and zero_point.numel() > 0:
+        zero_point = zero_point.view(shape_after_reduction)
+    else:
+        # in some cases zero_point being a non-value shows as a tensor
+        # with numel=0 which we handle by unifying the two
+        zero_point = None
+
+    quant = torch.clamp(
+        input * (1.0 / scale) + zero_point, quant_min, quant_max
+    )
+    quant = quant.view(original_shape)
+
+    return quant
 
 
 def _do_fake_quantize_float_affine(
@@ -423,7 +519,8 @@ def _do_fake_quantize_float_affine(
     quant_dtype: torch.dtype,
     quant_min: Optional[Union[int, float]] = None,
     quant_max: Optional[Union[int, float]] = None,
-    zero_point_domain: ZeroPointDomain = ZeroPointDomain.INT,
+    zero_point_domain: ZeroPointDomain = ZeroPointDomain.FLOAT,
+    representation_dtype: TorchAODTypeFloat = TorchAODTypeFloat.FLOAT4_E2M1
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Helper function for `fake_quantize_affine` that returns both the
@@ -445,6 +542,7 @@ def _do_fake_quantize_float_affine(
     
 
     print(f"========================== OG INPUT ==========================\n{input}")
+    print(input)
     torch.save(input, "/shareddata/dheyo/shivanvitha/torchtune/dummy_og1.pt")
     q = _quantize_affine(
         input,
@@ -457,9 +555,16 @@ def _do_fake_quantize_float_affine(
 
     ### TODO: after quantizing map the values to mxfp4_e2m1 ranges (close match) here
     # print(f"WEIGHT MATRIX SHAPE: {input.shape}") ## Its a 2D normal weight matrix!!!
-    mapped_q = vectorized_float_to_e2m1(q)
+    # mapped_q = float_to_e2m1(q)
+    abs_clamped = torch.abs(q)
+    binade_exp = torch.floor(torch.log2(torch.where(abs_clamped == 0, 1.0, abs_clamped)))
+    binade_exp = torch.clamp(binade_exp, - (_DTYPE_TO_BIAS[representation_dtype] + 1), _DTYPE_TO_EMAX[representation_dtype])  # Valid exponents
+    binade = torch.pow(2.0, binade_exp)
+    quant_step = binade * (2 ** (-_DYPE_TO_MANTISSA_BITS[representation_dtype]))
+    mapped_q = torch.round(q / quant_step) * quant_step
+
     print(f"========================== Mapped Q ==========================\n{mapped_q}")
-    # print(f"{scale} and {zero_point}")
+    print(f"MAPPED Q RANGE for {representation_dtype}: {(torch.min(mapped_q), torch.max(mapped_q))}")
 
     dq = _dequantize_affine(
         mapped_q,
@@ -471,7 +576,9 @@ def _do_fake_quantize_float_affine(
         output_dtype=input_dtype,
     )
     print(f"========================== DeQuant ==========================\n{dq}")
+    print(dq)
     torch.save(dq, "/shareddata/dheyo/shivanvitha/torchtune/dummy_after1.pt")
+    print(f"FP4's zero point domain: {zero_point_domain} - {zero_point}")
     import pdb; pdb.set_trace()
     return (q, dq)
 
@@ -485,6 +592,7 @@ def fake_quantize_float_affine_cachemask(
     quant_min: Optional[Union[int, float]] = None,
     quant_max: Optional[Union[int, float]] = None,
     zero_point_domain: ZeroPointDomain = ZeroPointDomain.FLOAT,
+    representation_dtype: TorchAODTypeFloat = TorchAODTypeFloat.FLOAT4_E2M1
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     General fake quantize op for quantization-aware training (QAT).
@@ -518,6 +626,7 @@ def fake_quantize_float_affine_cachemask(
         quant_min,
         quant_max,
         zero_point_domain,
+        representation_dtype
     )
     mask = torch.logical_and((q >= quant_min), (q <= quant_max))
     return (dq, mask)

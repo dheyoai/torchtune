@@ -3,10 +3,10 @@ from torchao.quantization.quant_primitives import MappingType, dequantize_affine
 from torchao.quantization.utils import _get_per_token_block_size
 
 from typing import List
-from torchtune.utils.dheyo_quant_primitives import choose_qparams_affine_float, fake_quantize_float_affine_cachemask
+from torchtune.utils.dheyo_quant_primitives import choose_qparams_affine_float, fake_quantize_float_affine_cachemask, TorchAODTypeFloat, _DTYPE_TO_QVALUE_BOUNDS
 
 
-def per_token_dynamic_quant_float(
+def per_token_dynamic_quant_float( ### TODO: This won't be used in QAT so take care of it later
     input: torch.Tensor,
     scale_dtype: torch.dtype = torch.float32,
     zero_point_dtype: torch.dtype = torch.float32,
@@ -57,6 +57,7 @@ def get_group_qparams_symmetric_float(
     groupsize=32,
     precision=torch.float32,
     mapping_type=MappingType.SYMMETRIC,
+    representation_dtype=TorchAODTypeFloat.FLOAT4_E2M1
 ):
     # needed for GPTQ with padding
     if groupsize > w.shape[-1]:
@@ -68,12 +69,13 @@ def get_group_qparams_symmetric_float(
 
     block_size = (1, groupsize)
     eps = torch.finfo(w.dtype).eps
-    ranges = {}
-    ranges[1] = (-1, 0)
-    # generating ranges for bit 2 to 8
-    for i in range(4, 5): ## only adding support for FLOAT4_E2M1
-        ranges[i] = (-6.0, 6.0) ## TODO: Expand the range with proper EM formula
-    quant_min, quant_max = ranges[n_bit]
+    # ranges = {}
+    # ranges[1] = (-1, 0)
+    ## generating ranges for bit 2 to 8
+    # for i in range(4, 5): ## only adding support for FLOAT4_E2M1
+        # ranges[i] = (-6.0, 6.0) ## TODO: Expand the range with proper EM formula
+    # quant_min, quant_max = ranges[n_bit]
+    quant_min, quant_max = _DTYPE_TO_QVALUE_BOUNDS[representation_dtype]
     scale, zero_point = choose_qparams_affine_float(
         w,
         mapping_type,
@@ -84,12 +86,13 @@ def get_group_qparams_symmetric_float(
         eps=eps,
         scale_dtype=precision,
         zero_point_dtype=precision,
+        representation_dtype=representation_dtype
     )
     return scale.reshape(w.shape[0], -1), zero_point.reshape(w.shape[0], -1)
 
 
 
-class _GenericFakeQuantizeWrapper(torch.autograd.Function):
+class _GenericFakeQuantizeWrapper(torch.autograd.Function): ## TODO: verify if you need to extend _GenericFakeQuantizerWrapper or not
     """
     Implementation of generic fake quantize with backward STE.
 
@@ -107,6 +110,7 @@ class _GenericFakeQuantizeWrapper(torch.autograd.Function):
         quant_min: float,
         quant_max: float,
         zero_point_domain: ZeroPointDomain = ZeroPointDomain.FLOAT,
+        representation_dype: TorchAODTypeFloat = TorchAODTypeFloat.FLOAT4_E2M1
     ) -> torch.Tensor:
         # avoid circular dependencies
         from torchao.quantization.qat.affine_fake_quantized_tensor import (
@@ -127,6 +131,7 @@ class _GenericFakeQuantizeWrapper(torch.autograd.Function):
             quant_min,
             quant_max,
             zero_point_domain,
+            representation_dype
         )
 
         ctx.save_for_backward(mask)
@@ -147,6 +152,7 @@ def _fake_quantize_per_channel_group(
     quant_max: int,
     group_size: int,
     zero_point_domain: ZeroPointDomain = ZeroPointDomain.FLOAT,
+    representation_dtype: TorchAODTypeFloat = TorchAODTypeFloat.FLOAT4_E2M1
 ) -> torch.Tensor:
     assert group_size > 1
     assert input.shape[-1] % group_size == 0
@@ -160,4 +166,5 @@ def _fake_quantize_per_channel_group(
         quant_min,
         quant_max,
         zero_point_domain,
+        representation_dtype
     )

@@ -80,6 +80,8 @@ bit_map = {
     'Q8_K': {'bits': 8, 'group_size': 256},
     'Q8_1': {'bits': 8, 'group_size': 32},
     'MXFP4': {'bits': 4, 'group_size': 32},
+    'MXFP6_E2M3': {'bits': 6, 'group_size': 32},
+    'MXFP6_E3M2': {'bits': 6, 'group_size': 32},
     'F16': {'bits': 16, 'group_size': 256},
     'F32': {'bits': 32, 'group_size': 256}
 }
@@ -150,7 +152,7 @@ def linear_forward_8davarw( ## not for QAT, only for convert()
         block_size,
         scales,
         zeros,
-        torch.bfloat16 if "MXFP4" in quant_value.upper() else torch.int8,
+        torch.bfloat16 if "MXFP" in quant_value.upper() else torch.int8,
         quant_min,
         quant_max,
         output_dtype=output_precision,
@@ -300,7 +302,24 @@ def _get_8davarw_weight_config(
             scale_precision=qparams_precision,
             zero_point_precision=qparams_precision,
         )
-            
+    elif bits == 6 and quant_value.upper() == "MXFP6_E2M3":
+        return FakeQuantizeConfigWrapper(
+            dtype=TorchAODTypeFloat.FLOAT6_E2M3,
+            group_size=group_size,
+            is_symmetric=True,
+            is_dynamic=True,
+            scale_precision=qparams_precision,
+            zero_point_precision=qparams_precision,
+        )
+    elif bits == 6 and quant_value.upper() == "MXFP6_E3M2":
+        return FakeQuantizeConfigWrapper(
+            dtype=TorchAODTypeFloat.FLOAT6_E3M2,
+            group_size=group_size,
+            is_symmetric=True,
+            is_dynamic=True,
+            scale_precision=qparams_precision,
+            zero_point_precision=qparams_precision,
+        )
     elif bits == 2:
         return FakeQuantizeConfig(
             dtype=TorchAODType.INT2,
@@ -481,6 +500,7 @@ def _replace_linear_8davarw(
     scales_precision: torch.dtype,
     linear_class: Type[torch.nn.Module],
     copy_weights: bool = False,
+    per_layer_quant_config_json: str = None
 ):
     # import pdb; pdb.set_trace()
     # import the util function here to avoid circular dependency
@@ -493,11 +513,12 @@ def _replace_linear_8davarw(
     def replacement_fn(child: torch.nn.Module, layer_type) -> torch.nn.Module:
         ### get layer_name -> quant_scheme mapping here ------------->
         ## sample layer_type = 'layers.0.attn.q_proj'
-        with open('/shareddata/dheyo/shivanvitha/torchtune/quant_config_example.json', 'r') as quant_file:
-            quant_map = json.load(quant_file)
+
 
         # import pdb; pdb.set_trace()
         try:
+            with open(per_layer_quant_config_json, 'r') as quant_file:
+                quant_map = json.load(quant_file)
             quant_key = convert_layer_name(layer_type)
             quant_value = quant_map[quant_key + ".weight"]
             bits, group_size = bit_map[quant_value]["bits"], bit_map[quant_value]["group_size"]
@@ -563,7 +584,7 @@ class Int8DynActIntVarWeightQATQuantizer(_LegacyQATQuantizer):
 
 
     def prepare(
-        self, model: torch.nn.Module, *args: Any, **kwargs: Any
+        self, model: torch.nn.Module, per_layer_quant_config_json: str, *args: Any, **kwargs: Any
     ) -> torch.nn.Module:
         # import pdb; pdb.set_trace()
 
@@ -575,6 +596,7 @@ class Int8DynActIntVarWeightQATQuantizer(_LegacyQATQuantizer):
             self.scales_precision,
             Int8DynActIntVarWeightQATLinear,
             copy_weights=True,
+            per_layer_quant_config_json=per_layer_quant_config_json
         )
         f = open("/shareddata/dheyo/shivanvitha/torchtune/dummy1.md", 'w')
         f.write(str(model))
@@ -647,7 +669,7 @@ class Int8DynActIntVarWeightQATQuantizer(_LegacyQATQuantizer):
                 # Load weights and qparams into quantized linear
                 n_bit = bits
                 (qmin, qmax) = _get_qmin_qmax(n_bit)
-                if "MXFP4" in quant_value.upper():
+                if "MXFP" in quant_value.upper():
                     (qmin, qmax) = (-6.0, 6.0)
                     (s, zp) = get_group_qparams_symmetric_float(
                         child.weight,
@@ -673,7 +695,7 @@ class Int8DynActIntVarWeightQATQuantizer(_LegacyQATQuantizer):
                     zp,
                     qmin,
                     qmax,
-                    torch.bfloat16 if "MXFP4" in quant_value.upper() else torch.int8,
+                    torch.bfloat16 if "MXFP" in quant_value.upper() else torch.int8,
                     config.group_size,
                 )
                 quantized_linear.weight = q_weight

@@ -62,6 +62,9 @@ quantizer:
   _component_: torchtune.training.quantization.Int8DynActIntVarWeightQATQuantizer
   groupsize: 256
   
+
+per_layer_quant_config_json: /shareddata/dheyo/shivanvitha/torchtune/quant_config_example.json
+
 gradient_accumulation_steps: 1  # Use to increase effective batch size
 optimizer:
   _component_: torch.optim.AdamW
