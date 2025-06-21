@@ -57,8 +57,9 @@ import json
 from torchtune.training.dheyo_qat_linear import FakeQuantizedLinearWrapper
 
 # =========================================================
-# |   Linear int8 dynamic activations + int6 weight QAT   |
+# |   Linear int8 dynamic activations + int var weight QAT   |
 # =========================================================
+## TODO: need to transfer the bit map to a proper JSON file
 bit_map = {
     'Q2_K': {'bits': 2, 'group_size': 256},
     'Q3_K': {'bits': 3, 'group_size': 256},
