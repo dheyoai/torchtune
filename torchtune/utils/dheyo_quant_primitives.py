@@ -9,7 +9,8 @@ from torchao.quantization.quant_primitives import (
     _quantize_affine_tinygemm_no_dtype_cast,
     _dequantize_affine_tinygemm_no_dtype_check,
     _quantize_affine_no_zero_point_no_dtype_cast,
-    _dequantize_affine_no_zero_point_no_dtype_check
+    _dequantize_affine_no_zero_point_no_dtype_check,
+    _Round
     )
 
 from torchao.utils import (
@@ -42,8 +43,43 @@ def calculate_mx_range(exponent_bits, mantissa_bits):
     effective_exponent = max_exponent - bias
     max_mantissa = (2 ** mantissa_bits - 1) / (2 ** mantissa_bits)
     max_value = (1 + max_mantissa) * (2 ** effective_exponent)
-    print(f"EXPONENT BITS: {exponent_bits} | MANTISSA BITS: {mantissa_bits}")
+    # print(f"EXPONENT BITS: {exponent_bits} | MANTISSA BITS: {mantissa_bits}")
     return -max_value, max_value
+
+
+def get_representable_values(exponent_bits, mantissa_bits, device="cpu"):
+    """
+    Generate positive representable values (normals and subnormals) for MXFP format.
+    
+    Args:
+        exponent_bits (int): Number of exponent bits.
+        mantissa_bits (int): Number of mantissa bits.
+        device (str): Device for tensor ('cpu' or 'cuda').
+    
+    Returns:
+        torch.Tensor: Sorted 1D tensor of positive representable values.
+    """
+    bias = 2 ** (exponent_bits - 1) - 1
+    values = []
+    
+    # Subnormals (exp = 0)
+    for m in range(1, 2 ** mantissa_bits):
+        mantissa = m / (2 ** mantissa_bits)
+        value = mantissa * (2 ** (1 - bias))
+        values.append(value)
+    
+    # Normals
+    max_exp = (2 ** exponent_bits) - 1
+    if exponent_bits == 5 and mantissa_bits == 2:  # E5M2
+        max_exp = 30  # Reserved 11111_2
+    for exp in range(1, max_exp + 1):
+        effective_exp = exp - bias
+        for m in range(2 ** mantissa_bits):
+            mantissa = m / (2 ** mantissa_bits)
+            value = (1 + mantissa) * (2 ** effective_exp)
+            values.append(value)
+    
+    return torch.tensor(sorted(values), dtype=torch.float32, device=device)
 
 
 class TorchAODTypeFloat(Enum):
@@ -58,6 +94,12 @@ class TorchAODTypeFloat(Enum):
 FLOAT4_E2M1_RANGE = calculate_mx_range(2, 1)
 FLOAT6_E2M3_RANGE = calculate_mx_range(2, 3)
 FLOAT6_E3M2_RANGE = calculate_mx_range(3, 2)
+
+FLOAT4_E2M1_REPRESENTABLE_VALUES = get_representable_values(2, 1)
+FLOAT6_E2M3_REPRESENTABLE_VALUES = get_representable_values(2, 3)
+FLOAT6_E3M2_REPRESENTABLE_VALUES = get_representable_values(3, 2)
+
+
 
 
 _DTYPE_TO_QVALUE_BOUNDS: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float, float]] = {
@@ -111,6 +153,12 @@ _SUB_BYTE_FLOAT_BOUNDS: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float,
     TorchAODTypeFloat.FLOAT6_E2M3: FLOAT6_E2M3_RANGE, ## TODO: use the EM formula and expand this later
     TorchAODTypeFloat.FLOAT6_E3M2: FLOAT6_E3M2_RANGE, ## TODO: use the EM formula and expand this later
 
+}
+
+_MXFP_REPRESENTABLE_VALUES: Dict[TorchAODTypeFloat, torch.Tensor] = {
+    TorchAODTypeFloat.FLOAT4_E2M1: FLOAT4_E2M1_REPRESENTABLE_VALUES, ## TODO: use the EM formula and expand this later
+    TorchAODTypeFloat.FLOAT6_E2M3: FLOAT6_E2M3_REPRESENTABLE_VALUES, ## TODO: use the EM formula and expand this later
+    TorchAODTypeFloat.FLOAT6_E3M2: FLOAT6_E3M2_REPRESENTABLE_VALUES,
 }
 
 # FP8_TYPES = {
@@ -236,7 +284,7 @@ def _choose_qparams_affine_float(
             max_val_pos = torch.max(-min_val_neg, max_val_pos)
             # scale = max_val_pos / (float(quant_max - quant_min) / 2)
             scale_power = torch.floor(torch.log2(max_val_pos)) - _DTYPE_TO_EMAX[representation_dtype]
-            scale = 2 ** torch.clamp(scale_power, -127, 128)
+            scale = 2 ** torch.clamp(scale_power, -127, 127)
             # import pdb; pdb.set_trace()
         else:
             assert mapping_type == MappingType.SYMMETRIC_NO_CLIPPING_ERR.name
@@ -560,12 +608,37 @@ def _do_fake_quantize_float_affine(
     ### TODO: after quantizing map the values to mxfp4_e2m1 ranges (close match) here
     # print(f"WEIGHT MATRIX SHAPE: {input.shape}") ## Its a 2D normal weight matrix!!!
     # mapped_q = float_to_e2m1(q)
-    abs_clamped = torch.abs(q)
-    binade_exp = torch.floor(torch.log2(torch.where(abs_clamped == 0, 1.0, abs_clamped)))
-    binade_exp = torch.clamp(binade_exp, - (_DTYPE_TO_BIAS[representation_dtype] + 1), _DTYPE_TO_EMAX[representation_dtype])  # Valid exponents
-    binade = torch.pow(2.0, binade_exp)
-    quant_step = binade * (2 ** (-_DYPE_TO_MANTISSA_BITS[representation_dtype]))
-    mapped_q = torch.round(q / quant_step) * quant_step
+    # abs_clamped = torch.abs(q)
+    # binade_exp = torch.floor(torch.log2(torch.where(abs_clamped == 0, 1.0, abs_clamped)))
+    # binade_exp = torch.clamp(binade_exp, - (_DTYPE_TO_BIAS[representation_dtype] + 1), _DTYPE_TO_EMAX[representation_dtype])  # Valid exponents
+    # binade = torch.pow(2.0, binade_exp)
+    # quant_step = binade * (2 ** (-_DYPE_TO_MANTISSA_BITS[representation_dtype]))
+    # mapped_q = torch.round(q / quant_step) * quant_step
+
+    # Nearest rounding
+    pos_values = _MXFP_REPRESENTABLE_VALUES[representation_dtype].to(q.device)
+    signs = torch.sign(q)  # [num_blocks, block_size]
+    abs_values = torch.abs(q)
+    
+    indices = torch.searchsorted(pos_values, abs_values)  # [num_blocks, block_size]
+    indices = torch.clamp(indices, 0, len(pos_values) - 1)
+    
+    # Get left and right candidates
+    left_values = pos_values[torch.clamp(indices - 1, 0, len(pos_values) - 1)]
+    right_values = pos_values[indices]
+    
+    left_dist = torch.abs(abs_values - left_values)
+    right_dist = torch.abs(abs_values - right_values)
+    nearest_indices = torch.where(left_dist <= right_dist, indices - 1, indices)
+    nearest_indices = torch.clamp(nearest_indices, 0, len(pos_values) - 1)
+    
+    quantized_abs = pos_values[nearest_indices]
+    
+    # Handle zeros
+    quantized_abs = torch.where(abs_values == 0, torch.tensor(0.0), quantized_abs)
+    
+    # Apply signs
+    mapped_q = signs * quantized_abs
 
     print(f"========================== Mapped Q ==========================\n{mapped_q}")
     print(f"MAPPED Q RANGE for {representation_dtype}: {(torch.min(mapped_q), torch.max(mapped_q))}")
@@ -585,6 +658,21 @@ def _do_fake_quantize_float_affine(
     torch.save(dq, "/shareddata/dheyo/shivanvitha/torchtune/dummy_after1.pt")
     print(f"FP4's zero point domain: {zero_point_domain} - {zero_point}")
     print(f"{representation_dtype} - {_DTYPE_TO_QVALUE_BOUNDS[representation_dtype]}")
+
+    # e2m3_values = [
+    #     -7.5, -7.0, -6.5, -6.0, -5.5, -5.0, -4.5, -4.0,
+    #     -3.75, -3.5, -3.25, -3.0, -2.75, -2.5, -2.25, -2.0,
+    #     -1.875, -1.75, -1.625, -1.5, -1.375, -1.25, -1.125, -1.0,
+    #     -0.875, -0.75, -0.625, -0.5, -0.375, -0.25, -0.125,
+    #     0.0,
+    #     0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875,
+    #     1.0, 1.125, 1.25, 1.375, 1.5, 1.625, 1.75, 1.875,
+    #     2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75,
+    #     4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5
+    # ]
+    # for el in mapped_q.flatten():
+    #     if el not in e2m3_values:
+    #         print(f"AYOOOOO - {el}")
     import pdb; pdb.set_trace()
     return (q, dq)
 
