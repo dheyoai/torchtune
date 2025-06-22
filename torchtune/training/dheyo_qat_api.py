@@ -1,5 +1,5 @@
 from torchao.quantization.qat.api import FakeQuantizeConfig
-from torchtune.utils.dheyo_quant_primitives import TorchAODTypeFloat, _SUB_BYTE_INT_BOUNDS, _SUB_BYTE_UINT_BOUNDS
+from torchtune.utils.dheyo_quant_primitives import TorchAODTypeFloat, _SUB_BYTE_FLOAT_BOUNDS, _SUB_BYTE_UINT_BOUNDS
 import torch 
 from typing import Union, Optional
 from torchao.quantization.quant_primitives import MappingType, ZeroPointDomain
@@ -97,7 +97,7 @@ class FakeQuantizeConfigWrapper(FakeQuantizeConfig):
 
         # Validate dtype
         all_dtypes = [torch.int8, torch.uint8]
-        all_dtypes.extend(list(_SUB_BYTE_INT_BOUNDS.keys()))
+        all_dtypes.extend(list(_SUB_BYTE_FLOAT_BOUNDS.keys()))
         all_dtypes.extend(list(_SUB_BYTE_UINT_BOUNDS.keys()))
         if dtype not in all_dtypes:
             raise ValueError(

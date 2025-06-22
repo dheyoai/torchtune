@@ -42,6 +42,7 @@ def calculate_mx_range(exponent_bits, mantissa_bits):
     effective_exponent = max_exponent - bias
     max_mantissa = (2 ** mantissa_bits - 1) / (2 ** mantissa_bits)
     max_value = (1 + max_mantissa) * (2 ** effective_exponent)
+    print(f"EXPONENT BITS: {exponent_bits} | MANTISSA BITS: {mantissa_bits}")
     return -max_value, max_value
 
 
@@ -49,21 +50,24 @@ class TorchAODTypeFloat(Enum):
     """
     Placeholder for float dtypes that do not exist in PyTorch core yet.
     """
-    FLOAT4_E2M1 = 4
-    FLOAT6_E2M3 = 6
-    FLOAT6_E3M2 = 6
+    FLOAT4_E2M1 = "float4_e2m1"
+    FLOAT6_E2M3 = "float6_e2m3"
+    FLOAT6_E3M2 = "float6_e3m2"
 
+
+FLOAT4_E2M1_RANGE = calculate_mx_range(2, 1)
+FLOAT6_E2M3_RANGE = calculate_mx_range(2, 3)
+FLOAT6_E3M2_RANGE = calculate_mx_range(3, 2)
 
 
 _DTYPE_TO_QVALUE_BOUNDS: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float, float]] = {
-    TorchAODTypeFloat.FLOAT4_E2M1: calculate_mx_range(2, 1), ## TODO: use the EM formula and expand this later
-    TorchAODTypeFloat.FLOAT6_E2M3: calculate_mx_range(2, 3), ## TODO: use the EM formula and expand this later
-    TorchAODTypeFloat.FLOAT6_E3M2: calculate_mx_range(3, 2), ## TODO: use the EM formula and expand this later
+    TorchAODTypeFloat.FLOAT4_E2M1: FLOAT4_E2M1_RANGE, ## TODO: use the EM formula and expand this later
+    TorchAODTypeFloat.FLOAT6_E2M3: FLOAT6_E2M3_RANGE, ## TODO: use the EM formula and expand this later
+    TorchAODTypeFloat.FLOAT6_E3M2: FLOAT6_E3M2_RANGE, ## TODO: use the EM formula and expand this later
 
     torch.bfloat16: (-3.40e38, 3.40e38)
-
-
 }
+
 _DTYPE_TO_BIT_WIDTH: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[int, int]] = {
     TorchAODTypeFloat.FLOAT4_E2M1: 4,
     TorchAODTypeFloat.FLOAT6_E2M3: 6,
@@ -102,10 +106,10 @@ _DYPE_TO_MANTISSA_BITS: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float,
 }
 
 _SUB_BYTE_UINT_BOUNDS: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float, float]] = {}
-_SUB_BYTE_INT_BOUNDS: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float, float]] = {
-    TorchAODTypeFloat.FLOAT4_E2M1: calculate_mx_range(2, 1), ## TODO: use the EM formula and expand this later
-    TorchAODTypeFloat.FLOAT6_E2M3: calculate_mx_range(2, 3), ## TODO: use the EM formula and expand this later
-    TorchAODTypeFloat.FLOAT6_E3M2: calculate_mx_range(3, 2), ## TODO: use the EM formula and expand this later
+_SUB_BYTE_FLOAT_BOUNDS: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float, float]] = {
+    TorchAODTypeFloat.FLOAT4_E2M1: FLOAT4_E2M1_RANGE, ## TODO: use the EM formula and expand this later
+    TorchAODTypeFloat.FLOAT6_E2M3: FLOAT6_E2M3_RANGE, ## TODO: use the EM formula and expand this later
+    TorchAODTypeFloat.FLOAT6_E3M2: FLOAT6_E3M2_RANGE, ## TODO: use the EM formula and expand this later
 
 }
 
@@ -565,6 +569,7 @@ def _do_fake_quantize_float_affine(
 
     print(f"========================== Mapped Q ==========================\n{mapped_q}")
     print(f"MAPPED Q RANGE for {representation_dtype}: {(torch.min(mapped_q), torch.max(mapped_q))}")
+    torch.save(mapped_q, "/shareddata/dheyo/shivanvitha/torchtune/dummy_mapped_q_after1.pt")
 
     dq = _dequantize_affine(
         mapped_q,
@@ -579,6 +584,7 @@ def _do_fake_quantize_float_affine(
     print(dq)
     torch.save(dq, "/shareddata/dheyo/shivanvitha/torchtune/dummy_after1.pt")
     print(f"FP4's zero point domain: {zero_point_domain} - {zero_point}")
+    print(f"{representation_dtype} - {_DTYPE_TO_QVALUE_BOUNDS[representation_dtype]}")
     import pdb; pdb.set_trace()
     return (q, dq)
 
