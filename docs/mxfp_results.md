@@ -36,10 +36,15 @@
 
 ## Imprtant Calculations
 ### OCP Bias
-$$2^{(\text{exponent\_bits} - 1)} - 1$$
+$$
+2^{(\text{exponentbits} - 1)} - 1
+$$
 
 ### E_MAX
-$$2^{\text{exponent\_bits}} - 1 - \text{bias}$$
+$$
+2^{\text{exponentbits}} - 1 - \text{bias}
+$$
+
 
 ### E8M0 Scale 
 $$S = 2^s$$
