@@ -53,11 +53,17 @@ Where $s = \lfloor \log_2 M \rfloor - e_{max}$; and $M = max_{1 \leq i \leq 32} 
 ## Error Observations
 For this purpose a weight matrix of size ~ 2.35M was used (1536, 1536)
 
-| MXFP Format | MSE | SNR (dB) |
+| Format | MSE | SNR (dB) |
 |-------------|-----|----------|
 | MXFP4 (E2M1) | 4.05e-05 | 17.625 |
 | MXFP6 (E2M3) | **2.08e-06** | **30.625** |
 | MXFP6 (E3M2) | 6.70e-06 | 25.5 |
+| Q6_K | 5.78e-06 | 26.125 |
+| Q4_0 | 2.44e-05 | 19.875 |
+| Q4_K | 4.62e-05 | 17.125 |
+
+## Comparison with Q-INT Variants (Next..)
+
 
 ## References
 1. https://arxiv.org/pdf/2310.10537
