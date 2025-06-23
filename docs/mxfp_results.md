@@ -62,7 +62,6 @@ For this purpose a weight matrix of size ~ 2.35M was used (1536, 1536)
 | Q4_0 | 2.44e-05 | 19.875 |
 | Q4_K | 4.62e-05 | 17.125 |
 
-## Comparison with Q-INT Variants (Next..)
 
 
 ## References
