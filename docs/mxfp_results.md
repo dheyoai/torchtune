@@ -48,7 +48,7 @@ $$
 
 ### E8M0 Scale 
 $$S = 2^s$$
-Where $s = \lfloor \log_2 M \rfloor - e\_max$; and $M = max_{1 \leq i \leq 32} |X_i|$ 
+Where $s = \lfloor \log_2 M \rfloor - e_{max}$; and $M = max_{1 \leq i \leq 32} |X_i|$ 
 
 ## Error Observations
 For this purpose a weight matrix of size ~ 2.35M was used (1536, 1536)
