@@ -950,6 +950,14 @@ class OpenThoughtsToMessages(Transform):
             )
 
         # import pdb; pdb.set_trace()
+        reasoning = sample[self._column_map["deepseek_reasoning"]]
+        solution = sample[self._column_map["deepseek_solution"]]
+        assistant_content = (
+            f"<think>{reasoning}<\think>\n\n### Solution:\n{solution}"
+            if reasoning
+            else solution
+        )
+
         messages = [
             Message(
                 role="user",
@@ -958,10 +966,13 @@ class OpenThoughtsToMessages(Transform):
             ),
             Message(
                 role="assistant",
-                content=sample[self._column_map["deepseek_solution"]], ## need to add reasoning + solution in case of reasoning models!!
+                content=assistant_content, ## need to add reasoning + solution in case of reasoning models!!
                 eot=True,
             ),
         ]
+
+        print(messages[1])
+        import pdb; pdb.set_trace()
         mask_messages(messages, self.masking_strategy)
         return {"messages": messages}
 

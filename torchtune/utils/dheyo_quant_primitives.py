@@ -142,8 +142,8 @@ _DTYPE_TO_EMAX: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float, float]]
 
 _DYPE_TO_MANTISSA_BITS: Dict[Union[torch.dtype, TorchAODTypeFloat], Tuple[float, float]] = {
     TorchAODTypeFloat.FLOAT4_E2M1: 1,
-    TorchAODTypeFloat.FLOAT6_E2M3: 3, ## verify
-    TorchAODTypeFloat.FLOAT6_E3M2: 2 ## verify
+    TorchAODTypeFloat.FLOAT6_E2M3: 3,
+    TorchAODTypeFloat.FLOAT6_E3M2: 2 
 
 }
 
@@ -593,9 +593,9 @@ def _do_fake_quantize_float_affine(
         raise ValueError(f"Unrecognized zero point domain: {zero_point_domain}")
     
 
-    print(f"========================== OG INPUT ==========================\n{input}")
-    print(input)
-    torch.save(input, "/shareddata/dheyo/shivanvitha/torchtune/dummy_og1.pt")
+    # print(f"========================== OG INPUT ==========================\n{input}")
+    # print(input)
+    # torch.save(input, "/shareddata/dheyo/shivanvitha/torchtune/dummy_og1.pt")
     q = _quantize_affine(
         input,
         block_size,
@@ -640,9 +640,9 @@ def _do_fake_quantize_float_affine(
     # Apply signs
     mapped_q = signs * quantized_abs
 
-    print(f"========================== Mapped Q ==========================\n{mapped_q}")
-    print(f"MAPPED Q RANGE for {representation_dtype}: {(torch.min(mapped_q), torch.max(mapped_q))}")
-    torch.save(mapped_q, "/shareddata/dheyo/shivanvitha/torchtune/dummy_mapped_q_after1.pt")
+    # print(f"========================== Mapped Q ==========================\n{mapped_q}")
+    # print(f"MAPPED Q RANGE for {representation_dtype}: {(torch.min(mapped_q), torch.max(mapped_q))}")
+    # torch.save(mapped_q, "/shareddata/dheyo/shivanvitha/torchtune/dummy_mapped_q_after1.pt")
 
     dq = _dequantize_affine(
         mapped_q,
@@ -653,11 +653,11 @@ def _do_fake_quantize_float_affine(
         quant_max,
         output_dtype=input_dtype,
     )
-    print(f"========================== DeQuant ==========================\n{dq}")
-    print(dq)
-    torch.save(dq, "/shareddata/dheyo/shivanvitha/torchtune/dummy_after1.pt")
-    print(f"FP4's zero point domain: {zero_point_domain} - {zero_point}")
-    print(f"{representation_dtype} - {_DTYPE_TO_QVALUE_BOUNDS[representation_dtype]}")
+    # print(f"========================== DeQuant ==========================\n{dq}")
+    # print(dq)
+    # torch.save(dq, "/shareddata/dheyo/shivanvitha/torchtune/dummy_after1.pt")
+    # print(f"FP4's zero point domain: {zero_point_domain} - {zero_point}")
+    # print(f"{representation_dtype} - {_DTYPE_TO_QVALUE_BOUNDS[representation_dtype]}")
 
     # e2m3_values = [
     #     -7.5, -7.0, -6.5, -6.0, -5.5, -5.0, -4.5, -4.0,
@@ -673,7 +673,7 @@ def _do_fake_quantize_float_affine(
     # for el in mapped_q.flatten():
     #     if el not in e2m3_values:
     #         print(f"AYOOOOO - {el}")
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     return (q, dq)
 
 
