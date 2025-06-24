@@ -971,8 +971,6 @@ class OpenThoughtsToMessages(Transform):
             ),
         ]
 
-        print(messages[1])
-        import pdb; pdb.set_trace()
         mask_messages(messages, self.masking_strategy)
         return {"messages": messages}
 
