@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 from typing import Callable, Optional
-
+import torch
 from torch import nn
 from torch.distributed.tensor.parallel.style import ParallelStyle
 
@@ -28,7 +28,7 @@ from torchao.quantization.qat import (
     Int8DynActInt4WeightQATQuantizer,
 )
 
-from .dheyo_qat import Int8DynActIntVarWeightQATQuantizer
+from .dheyo_qat import Int8DynActIntVarWeightQATQuantizer, Int8DynActIntVarWeightQATLinear
 
 from torchao.quantization.qat.linear import (
     disable_4w_fake_quant,
@@ -62,6 +62,23 @@ _quantizer_mode_to_disable_fake_quant = {}
 _quantizer_mode_to_enable_fake_quant = {}
 
 
+# TODO: remove these in favor of enable_linear_fake_quant
+def enable_8davarw_fake_quant(mod: torch.nn.Module):
+    """
+    Enable fake quantization for `Int8DynActInt4WeightQATLinear`.
+    """
+    if isinstance(mod, Int8DynActIntVarWeightQATLinear):
+        mod.enable_fake_quant()
+
+
+# TODO: remove in favor of disable_linear_fake_quant
+def disable_8davarw_fake_quant(mod: torch.nn.Module):
+    """
+    Disable fake quantization for `Int8DynActInt4WeightQATLinear`.
+    """
+    if isinstance(mod, Int8DynActIntVarWeightQATLinear):
+        mod.disable_fake_quant()
+
 # ========================================
 # int8 dynamic activations + int4 weight |
 # ========================================
@@ -86,7 +103,10 @@ _quantizer_to_mode[Int8DynActInt4WeightQuantizer] = "8da4w"
 _quantizer_to_mode[Int8DynActInt4WeightQATQuantizer] = "8da4w-qat"
 _quantizer_to_mode[Int8DynActIntVarWeightQATQuantizer] = "8davarw-qat"
 _quantizer_mode_to_disable_fake_quant["8da4w-qat"] = disable_8da4w_fake_quant
+_quantizer_mode_to_disable_fake_quant["8davarw-qat"] = disable_8davarw_fake_quant
 _quantizer_mode_to_enable_fake_quant["8da4w-qat"] = enable_8da4w_fake_quant
+_quantizer_mode_to_enable_fake_quant["8davarw-qat"] = enable_8davarw_fake_quant
+
 
 
 # ==================
@@ -113,6 +133,8 @@ class Int4WeightOnlyQuantizer:
 
 _quantizer_to_mode[Int4WeightOnlyQuantizer] = "4w"
 _quantizer_to_mode[Int4WeightOnlyQATQuantizer] = "4w-qat"
+# _quantizer_to_mode[Int4WeightOnlyQATQuantizer] = "4w-qat"
+
 _quantizer_mode_to_disable_fake_quant["4w-qat"] = disable_4w_fake_quant
 _quantizer_mode_to_enable_fake_quant["4w-qat"] = enable_4w_fake_quant
 

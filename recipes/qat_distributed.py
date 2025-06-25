@@ -982,6 +982,30 @@ class QATRecipeDistributed(FTRecipeInterface):
                 ):
                     torch.cuda.memory._record_memory_history()
 
+
+
+                # Optionally wait N steps before enabling fake quant
+                if self._fake_quant_after_n_steps is not None:
+                    if self.global_step == 0:
+                        self._logger.info(
+                            "Step 0: Disabling fake quant, will re-enable in step %s"
+                            % self._fake_quant_after_n_steps
+                        )
+                        disable_fq = training.quantization._get_disable_fake_quant(
+                            self._quantizer_mode
+                        )
+                        self._model.apply(disable_fq)
+                    elif self.global_step == self._fake_quant_after_n_steps:
+                        self._logger.info(
+                            "Step %s: Enabling fake quant"
+                            % self._fake_quant_after_n_steps
+                        )
+                        enable_fq = training.quantization._get_enable_fake_quant(
+                            self._quantizer_mode
+                        )
+                        self._model.apply(enable_fq)
+
+                        
                 utils.batch_to_device(batch, self._device)
 
                 # Calculate the number of unmasked tokens in the current batch
