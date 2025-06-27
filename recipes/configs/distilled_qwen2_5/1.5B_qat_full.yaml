@@ -2,7 +2,7 @@
 # using a Qwen2.5 1.5B model
 #
 # This config assumes that you've run the following command before launching:
-#   tune download deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B --output-dir /shareddata/dheyo/shivanvitha/torchtune/models/DeepSeek-R1-Distill-Qwen-1.5B
+#   tune download deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B --output-dir /shareddata/dheyo/varunika/QAT/torchtune/models/DeepSeek-R1-Distill-Qwen-1.5B
 #
 # To launch on 2 devices, run the following command from root:
 #   tune run --nproc_per_node 2 full_finetune_distributed --config distilled_qwen2_5/1.5B_full
@@ -15,7 +15,7 @@
 
 ## tune run quantize --config recipes/configs/qwen2_5/1.5B_qat_full.yaml
 
-output_dir: /shareddata/dheyo/shivanvitha/torchtune/models/torchtune/distilled_qwen2_5_1_5B/qat_full # /shareddata/dheyo/shivanvitha/torchtune/models may be deleted by your system. Change it to your preference.
+output_dir: /shareddata/dheyo/varunika/QAT/torchtune/models/torchtune/distilled_qwen2_5_1_5B/qat_full_v9 # /shareddata/dheyo/varunika/QAT/torchtune/models may be deleted by your system. Change it to your preference.
 
 # Model arguments
 model:
@@ -24,14 +24,14 @@ model:
 # Tokenizer
 tokenizer:
   _component_: torchtune.models.distilled_qwen2_5.distilled_qwen2_5_tokenizer
-  path: /shareddata/dheyo/shivanvitha/torchtune/models/DeepSeek-R1-Distill-Qwen-1.5B/vocab.json
-  merges_file: /shareddata/dheyo/shivanvitha/torchtune/models/DeepSeek-R1-Distill-Qwen-1.5B/merges.txt
+  path: /shareddata/dheyo/varunika/QAT/torchtune/models/DeepSeek-R1-Distill-Qwen-1.5B/vocab.json
+  merges_file: /shareddata/dheyo/varunika/QAT/torchtune/models/DeepSeek-R1-Distill-Qwen-1.5B/merges.txt
   max_seq_len: 2048
 
 # Checkpointer
 checkpointer:
   _component_: torchtune.training.FullModelHFCheckpointer
-  checkpoint_dir: /shareddata/dheyo/shivanvitha/torchtune/models/DeepSeek-R1-Distill-Qwen-1.5B
+  checkpoint_dir: /shareddata/dheyo/varunika/QAT/torchtune/models/DeepSeek-R1-Distill-Qwen-1.5B
   checkpoint_files: [model.safetensors]
   recipe_checkpoint: null
   output_dir: ${output_dir}
@@ -40,21 +40,21 @@ resume_from_checkpoint: False
 
 # Dataset and Sampler
 dataset:
-  _component_: torchtune.datasets.open_thoughts_dataset
+  _component_: torchtune.datasets.gsm8k_dataset
   packed: False  # True increases speed
   split: train[:95%]
 seed: null
 shuffle: True
 
 # Validation
-run_val_every_n_steps: 10 # Change to an integer to enable validation every N steps
+run_val_every_n_steps: 100 # Change to an integer to enable validation every N steps
 dataset_val:
-  _component_: torchtune.datasets.open_thoughts_dataset
+  _component_: torchtune.datasets.gsm8k_dataset
   split: train[95%:]
 batch_size_val: ${batch_size}
 
 # Fine-tuning arguments
-epochs: 2
+epochs: 10
 max_steps_per_epoch: null
 batch_size: 8
 # QAT arguments
@@ -64,13 +64,19 @@ quantizer:
   
 fake_quant_after_n_steps: 1000
 
-per_layer_quant_config_json: /shareddata/dheyo/shivanvitha/torchtune/quant_config_example.json
+per_layer_quant_config_json: /shareddata/dheyo/varunika/QAT/torchtune/quant_config_example.json
 
 gradient_accumulation_steps: 1  # Use to increase effective batch size
 optimizer:
   _component_: torch.optim.AdamW
   fused: True
-  lr: 2e-6
+  lr: 5e-6
+
+# lr_scheduler:
+#   _component_: torchtune.training.lr_schedulers.get_cosine_schedule_with_warmup
+#   num_warmup_steps: 100
+
+  
 optimizer_in_bwd: False  # True saves memory. Requires gradient_accumulation_steps=1
 loss:
   _component_: torchtune.modules.loss.LinearCrossEntropyLoss
@@ -86,8 +92,15 @@ clip_grad_norm: null
 compile: False  # torch.compile the model + loss, True increases speed + decreases memory
 
 # Logging
+# metric_logger:
+#   _component_: torchtune.training.metric_logging.DiskLogger
+#   log_dir: ${output_dir}/logs
+# log_every_n_steps: 1
+# log_peak_memory_stats: True
+# log_level: INFO  # DEBUG, WARN, etc.
+
 metric_logger:
-  _component_: torchtune.training.metric_logging.DiskLogger
+  _component_: torchtune.training.metric_logging.TensorBoardLogger
   log_dir: ${output_dir}/logs
 log_every_n_steps: 1
 log_peak_memory_stats: True
