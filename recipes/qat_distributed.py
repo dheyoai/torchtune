@@ -967,6 +967,8 @@ class QATRecipeDistributed(FTRecipeInterface):
         num_tokens = 0
 
         self._profiler.start()
+        
+        # steps_to_save_at = {1000, 1001} #uncomment this line to save checkpoints at step n.
         # self.epochs_run should be non-zero when we're resuming from a checkpoint
         for curr_epoch in range(self.epochs_run, self.total_epochs):
             pbar = tqdm(total=self._steps_per_epoch, disable=not self._is_rank_zero)
@@ -1058,6 +1060,34 @@ class QATRecipeDistributed(FTRecipeInterface):
 
                     # Update the number of steps when the weights are updated
                     self.global_step += 1
+                    
+                    # Uncoment line 1066 to 1089 to save checkpoint at step n
+                    # Check if current step is one of the desired steps for checkpointing
+                    # if self.global_step in steps_to_save_at:
+                    #     utils.log_rank_zero(self._logger, f"Saving checkpoint at global step {self.global_step}")
+                    #     # Call save_checkpoint, passing the global_step for naming/tracking
+                    #     self._checkpoint_client.save_checkpoint(
+                    #         model=self._model,
+                    #         optimizer=(
+                    #             self._optimizer
+                    #             if not self._optimizer_in_bwd
+                    #             else self._optim_ckpt_wrapper
+                    #         ),
+                    #         training_progress=TrainingProgress(
+                    #             seed=self.seed,
+                    #             # Note: epochs_run is the count *before* the end-of-epoch increment
+                    #             epochs_run=self.epochs_run,
+                    #             total_epochs=self.total_epochs,
+                    #             max_steps_per_epoch=self.max_steps_per_epoch,
+                    #             dataloader_state_dict=self._dataloader.state_dict(),
+                    #         ),
+                    #         # Pass current epoch and importantly, the global_step
+                    #         epoch=curr_epoch,
+                    #         global_step=self.global_step
+                    #     )
+                    #     # Add a barrier to ensure all ranks synchronize before moving on
+                    #     torch.distributed.barrier()
+                    
 
                     # Step the learning rate scheduler
                     if self._lr_scheduler is not None:
@@ -1153,6 +1183,9 @@ class QATRecipeDistributed(FTRecipeInterface):
                 ),
                 epoch=curr_epoch,
             )
+            # torch.distributed.barrier() # Add a barrier after each epoch save .
+            # Uncomment above line for step n, checkpoint saving .
+            
 
         self._profiler.stop()
 
