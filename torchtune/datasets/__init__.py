@@ -24,9 +24,10 @@ from torchtune.datasets._text_completion import (
 )
 from torchtune.datasets._wikitext import wikitext_dataset
 from torchtune.datasets._open_thoughts import open_thoughts_dataset
-
+from torchtune.datasets._gsm8k import gsm8k_dataset
 
 __all__ = [
+    "gsm8k_dataset",
     "open_thoughts_dataset",
     "alpaca_dataset",
     "alpaca_cleaned_dataset",

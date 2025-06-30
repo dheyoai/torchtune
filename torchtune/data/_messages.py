@@ -975,6 +975,117 @@ class OpenThoughtsToMessages(Transform):
         return {"messages": messages}
 
 
+class Gsm8kToMessages(Transform):
+    """
+    Message transform class for Alpaca-style datasets with "question", "input", and "answer"
+    (or equivalent fields specified in column_map) columns. User messages are formed from the
+    question + input columns and assistant messages are formed from the answer column. Prompt
+    templating is conditional on the presence of the "input" column, and thus is handled directly
+    in this transform class instead of a dedicated :class:`~torchtune.data.PromptTemplate` class
+    due to this custom logic.
+
+    Args:
+        train_on_input (Optional[bool]): whether the model is trained on the user prompt or not.
+            Deprecated parameter and will be removed in a future release.
+            Default is None.
+        column_map (Optional[dict[str, str]]): a mapping to change the expected "question", "input",
+            and "answer" column names to the actual column names in the dataset. Default is None,
+            keeping the default column names.
+        masking_strategy (Optional[str]): masking strategy to use for model training.
+            Must be one of: `train_on_all`, `train_on_assistant`, `train_on_last`.
+            Default is "train_on_all".
+
+            - ``train_on_all``: both user and assistant messages are unmasked
+            - ``train_on_assistant``: user messages are masked, only assistant messages are unmasked
+            - ``train_on_last``: only the last assistant message is unmasked
+
+    Raises:
+        ValueError:
+            If ``column_map`` is provided and ``question`` not in ``column_map``, or
+                ``answer`` not in ``column_map``
+    """
+
+    def __init__(
+        self,
+        train_on_input: Optional[bool] = None,
+        column_map: Optional[dict[str, str]] = None,
+        masking_strategy: Optional[str] = "train_on_all",
+    ):
+        if train_on_input is not None:
+            warn(
+                "train_on_input is deprecated and will be removed in a future release. "
+                "Please use masking_strategy instead."
+                "You should replace train_on_input=True with masking_strategy='train_on_all', and "
+                "train_on_input=False with masking_strategy='train_on_assistant'."
+                "For backwards compatibility, if you pass both train_on_input and masking_strategy, "
+                "the value of masking_strategy will be ignored until torchtune 0.7. ",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            masking_strategy = (
+                "train_on_all" if train_on_input else "train_on_assistant"
+            )
+        self.masking_strategy = masking_strategy
+        if column_map:
+            if "question" not in column_map:
+                raise ValueError(
+                    f"Expected a key of 'question' in column_map but found {column_map.keys()}."
+                )
+            # input is optional
+            if "answer" not in column_map:
+                raise ValueError(
+                    f"Expected a key of 'answer' in column_map but found {column_map.keys()}."
+                )
+            self._column_map = column_map
+        else:
+            self._column_map = {
+                "question": "question",
+                "answer": "answer",
+            }
+        self.template = {
+            "prompt_input": (
+                "Solve step-by-step:\n"
+        "{question}\n"
+        "Finally, write the final answer in this format:\n"
+        "#### 42  (if numeric)\n"
+        "#### The answer is X  (if text)"
+            ),
+            "prompt_no_input": (
+                "Solve step-by-step:\n"
+        "{question}\n"
+        "Finally, write the final answer in this format:\n"
+        "#### 42  (if numeric)\n"
+        "#### The answer is X  (if text)"
+            ),
+        }
+
+    def __call__(self, sample: Mapping[str, Any]) -> Mapping[str, Any]:
+        key_input = self._column_map.get("question", "question")
+        if key_input in sample and sample[key_input]:
+            prompt = self.template["prompt_input"].format(
+                question=sample[self._column_map["question"]],
+                # input=sample[key_input],
+            )
+        else:
+            prompt = self.template["prompt_no_input"].format(
+                question=sample[self._column_map["question"]]
+            )
+        # import pdb; pdb.set_trace()
+
+        messages = [
+            Message(
+                role="user",
+                content=prompt,
+                eot=True,
+            ),
+            Message(
+                role="assistant",
+                content=sample[self._column_map["answer"]],
+                eot=True,
+            ),
+        ]
+        mask_messages(messages, self.masking_strategy)
+        return {"messages": messages}
 
 
 

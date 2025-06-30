@@ -1,0 +1,50 @@
+[1mdiff --git a/recipes/configs/distilled_qwen2_5/1.5B_qat_full.yaml b/recipes/configs/distilled_qwen2_5/1.5B_qat_full.yaml[m
+[1mindex db6dd0b6..5745d9de 100644[m
+[1m--- a/recipes/configs/distilled_qwen2_5/1.5B_qat_full.yaml[m
+[1m+++ b/recipes/configs/distilled_qwen2_5/1.5B_qat_full.yaml[m
+[36m@@ -15,7 +15,7 @@[m
+ [m
+ ## tune run quantize --config recipes/configs/qwen2_5/1.5B_qat_full.yaml[m
+ [m
+[31m-output_dir: /shareddata/dheyo/varunika/QAT/torchtune/models/torchtune/distilled_qwen2_5_1_5B/qat_full_v9 # /shareddata/dheyo/varunika/QAT/torchtune/models may be deleted by your system. Change it to your preference.[m
+[32m+[m[32moutput_dir: /shareddata/dheyo/varunika/QAT/torchtune/models/torchtune/distilled_qwen2_5_1_5B/qat_full_v10 # /shareddata/dheyo/varunika/QAT/torchtune/models may be deleted by your system. Change it to your preference.[m
+ [m
+ # Model arguments[m
+ model:[m
+[36m@@ -54,7 +54,7 @@[m [mdataset_val:[m
+ batch_size_val: ${batch_size}[m
+ [m
+ # Fine-tuning arguments[m
+[31m-epochs: 10[m
+[32m+[m[32mepochs: 15[m
+ max_steps_per_epoch: null[m
+ batch_size: 8[m
+ # QAT arguments[m
+[36m@@ -62,7 +62,7 @@[m [mquantizer:[m
+   _component_: torchtune.training.quantization.Int8DynActIntVarWeightQATQuantizer[m
+   groupsize: 256[m
+   [m
+[31m-fake_quant_after_n_steps: 1000[m
+[32m+[m[32m# fake_quant_after_n_steps: 1000[m
+ [m
+ per_layer_quant_config_json: /shareddata/dheyo/varunika/QAT/torchtune/quant_config_example.json[m
+ [m
+[36m@@ -70,17 +70,7 @@[m [mgradient_accumulation_steps: 1  # Use to increase effective batch size[m
+ optimizer:[m
+   _component_: torch.optim.AdamW[m
+   fused: True[m
+[31m-<<<<<<< Updated upstream[m
+[31m-  lr: 5e-6[m
+[31m-[m
+[31m-# lr_scheduler:[m
+[31m-#   _component_: torchtune.training.lr_schedulers.get_cosine_schedule_with_warmup[m
+[31m-#   num_warmup_steps: 100[m
+[31m-[m
+[31m-  [m
+[31m-=======[m
+[31m-  lr: 2e-5[m
+[31m->>>>>>> Stashed changes[m
+[32m+[m[32m  lr: 2e-6[m
+ optimizer_in_bwd: False  # True saves memory. Requires gradient_accumulation_steps=1[m
+ loss:[m
+   _component_: torchtune.modules.loss.LinearCrossEntropyLoss[m
